@@ -927,7 +927,7 @@ class JavaScriptAnalyzer(BaseAnalyzer):
         
         return findings
     
-    def _analyze_api_calls(self, file_path: Path, code: str) -> tuple[List[Finding], List[Dict[str, Any]]]:
+    def _analyze_api_calls(self, file_path: Path, code: str) -> Tuple[List[Finding], List[Dict[str, Any]]]:
         """Analyze fetch() and axios calls for data transmission"""
         findings = []
         data_flows = []

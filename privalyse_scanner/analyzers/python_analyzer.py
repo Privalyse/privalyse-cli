@@ -2,7 +2,7 @@
 
 import ast
 import re
-from typing import List, Dict, Any, Optional, Set
+from typing import List, Dict, Any, Optional, Set, Tuple
 from pathlib import Path
 
 from ..models.finding import Finding, Severity, ClassificationResult
@@ -32,7 +32,7 @@ SECRET_PATTERNS = {
 # High-entropy string pattern (likely a secret)
 HIGH_ENTROPY_PATTERN = r'^[A-Za-z0-9+/=_-]{32,}$'
 
-def is_likely_secret(var_name: str, value: str) -> tuple[Optional[str], float]:
+def is_likely_secret(var_name: str, value: str) -> Tuple[Optional[str], float]:
     """
     Check if a variable assignment is likely a hardcoded secret.
     Returns (secret_type, confidence) if detected, (None, 0.0) otherwise.
@@ -65,7 +65,7 @@ class PythonAnalyzer(BaseAnalyzer):
         self.cross_file_analyzer = cross_file_analyzer  # Cross-file taint support
         self.taint_tracker = None  # Will be set during analyze_file()
     
-    def analyze_file(self, file_path: Path, code: str, **kwargs) -> tuple[List[Finding], List[Dict[str, Any]]]:
+    def analyze_file(self, file_path: Path, code: str, **kwargs) -> Tuple[List[Finding], List[Dict[str, Any]]]:
         """
         Analyze a Python file for privacy issues
         

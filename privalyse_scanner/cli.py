@@ -198,22 +198,39 @@ Examples:
     
     # Color-coded compliance score
     score = compliance['score']
-    if score >= 90:
-        emoji = "🟢"
-    elif score >= 70:
-        emoji = "🟡"
+    # Use ASCII fallback for Windows terminals that don't support unicode
+    if sys.platform == 'win32':
+        if score >= 90:
+            emoji = "[PASS]"
+        elif score >= 70:
+            emoji = "[WARN]"
+        else:
+            emoji = "[FAIL]"
+        
+        print(f"\n{emoji} Compliance Score: {score}/100 ({compliance['status']})")
+        print(f"Findings: {findings_count} total")
+        if compliance.get('critical_findings'):
+            print(f"Critical: {compliance['critical_findings']}")
+        if compliance.get('high_findings'):
+            print(f"High: {compliance['high_findings']}")
+        print(f"Report: {output_path}")
+        logger.info("Scan complete")
     else:
-        emoji = "🔴"
-    
-    print(f"\n{emoji} Compliance Score: {score}/100 ({compliance['status']})")
-    print(f"📊 Findings: {findings_count} total")
-    if compliance.get('critical_findings'):
-        print(f"🔴 Critical: {compliance['critical_findings']}")
-    if compliance.get('high_findings'):
-        print(f"🟠 High: {compliance['high_findings']}")
-    print(f"📄 Report: {output_path}")
-    
-    logger.info("✅ Scan complete")
+        if score >= 90:
+            emoji = "🟢"
+        elif score >= 70:
+            emoji = "🟡"
+        else:
+            emoji = "🔴"
+        
+        print(f"\n{emoji} Compliance Score: {score}/100 ({compliance['status']})")
+        print(f"📊 Findings: {findings_count} total")
+        if compliance.get('critical_findings'):
+            print(f"🔴 Critical: {compliance['critical_findings']}")
+        if compliance.get('high_findings'):
+            print(f"🟠 High: {compliance['high_findings']}")
+        print(f"📄 Report: {output_path}")
+        logger.info("✅ Scan complete")
     
     return 0 if score >= 70 else 1
 

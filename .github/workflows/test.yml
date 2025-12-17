@@ -36,7 +36,8 @@ jobs:
       run: |
         echo "🧪 Testing Vulnerable App (Expect Failure)..."
         # We expect this to fail (exit code 1) because of low compliance score
-        if privalyse --root examples/bad-practice-app --out test_vulnerable.json; then
+        # We use --format json to ensure we can verify the output later
+        if privalyse --root examples/bad-practice-app --out test_vulnerable.json --format json; then
           echo "❌ Error: Vulnerable app scan unexpectedly passed (Exit Code 0)!"
           exit 1
         else
@@ -48,7 +49,7 @@ jobs:
       shell: bash
       run: |
         echo "🧪 Testing Secure App (Expect Success)..."
-        privalyse --root examples/best-practice-app --out test_secure.json
+        privalyse --root examples/best-practice-app --out test_secure.json --format json
     
     - name: Verify scan results
       run: |

@@ -3,16 +3,16 @@ requires = ["setuptools>=61.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "privalyse"
+name = "privalyse-cli"
 version = "0.1.0"
 description = "Privacy scanner with GDPR compliance reports - Zero config, instant insights"
 readme = "README.md"
 authors = [
-    {name = "Privalyse Team", email = "hello@privalyse.com"}
+    {name = "Privalyse", email = "hello@privalyse.com"}
 ]
 license = {text = "MIT"}
 classifiers = [
-    "Development Status :: 4 - Beta",
+    "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
     "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",

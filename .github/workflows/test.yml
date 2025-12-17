@@ -33,8 +33,16 @@ jobs:
     
     - name: Test scan on examples
       run: |
-        # Vulnerable app is expected to fail compliance check (exit code 1)
-        privalyse --root examples/bad-practice-app --out test_vulnerable.json || true
+        echo "🧪 Testing Vulnerable App (Expect Failure)..."
+        # We expect this to fail (exit code 1) because of low compliance score
+        if privalyse --root examples/bad-practice-app --out test_vulnerable.json; then
+          echo "❌ Error: Vulnerable app scan unexpectedly passed!"
+          exit 1
+        else
+          echo "✅ Vulnerable app scan failed as expected (Compliance Score < 70)."
+        fi
+        
+        echo "🧪 Testing Secure App (Expect Success)..."
         privalyse --root examples/best-practice-app --out test_secure.json
     
     - name: Verify scan results

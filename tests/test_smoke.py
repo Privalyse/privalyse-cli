@@ -18,7 +18,11 @@ class TestScannerSmoke(unittest.TestCase):
         self.test_file = Path(self.test_dir) / "test_app.py"
         with open(self.test_file, "w") as f:
             f.write("""
-def process_user_data(email, password):
+from flask import request
+
+def process_user_data():
+    email = request.args.get('email')
+    password = request.args.get('password')
     print(f"User email: {email}")  # PII in logs
     db.execute(f"INSERT INTO users VALUES ('{password}')")  # SQL Injection + Password
             """)

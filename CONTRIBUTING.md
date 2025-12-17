@@ -13,7 +13,7 @@ Thank you for considering contributing to Privalyse! 🎉
 
 1. **Fork & Clone**
 ```bash
-git clone https://github.com/yourusername/privalyse-cli.git
+git clone https://github.com/privalyse/privalyse-cli.git
 cd privalyse-cli
 ```
 

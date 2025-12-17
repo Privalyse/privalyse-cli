@@ -1,6 +1,6 @@
 # Changelog
 
-## [0.1.0] - 2025-12-16 - Alpha Release
+## [0.1.0] - 2025-12-17 - Alpha Release
 
 First public release of Privalyse - The privacy scanner for modern devs.
 
@@ -15,4 +15,4 @@ First public release of Privalyse - The privacy scanner for modern devs.
 
 ---
 
-For detailed release notes, see [GitHub Releases](https://github.com/yourusername/privalyse/releases).
+For detailed release notes, see [GitHub Releases](https://github.com/privalyse/privalyse-cli/releases).

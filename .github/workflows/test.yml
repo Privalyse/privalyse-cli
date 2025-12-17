@@ -33,7 +33,8 @@ jobs:
     
     - name: Test scan on examples
       run: |
-        privalyse --root examples/bad-practice-app --out test_vulnerable.json
+        # Vulnerable app is expected to fail compliance check (exit code 1)
+        privalyse --root examples/bad-practice-app --out test_vulnerable.json || true
         privalyse --root examples/best-practice-app --out test_secure.json
     
     - name: Verify scan results

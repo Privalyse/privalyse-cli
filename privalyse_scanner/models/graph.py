@@ -95,3 +95,40 @@ class SemanticDataFlowGraph:
             
         lines.append("}")
         return "\n".join(lines)
+
+    def link_network_flows(self):
+        """
+        Connects network sinks (e.g., axios.post) to network sources (e.g., Flask routes).
+        """
+        # 1. Find all network sinks (JS)
+        network_sinks = []
+        for node in self.nodes.values():
+            if node.type == 'sink' and ('axios' in node.label or 'fetch' in node.label):
+                # Check metadata for URL
+                url = node.metadata.get('url')
+                if url:
+                    network_sinks.append((node, url))
+
+        # 2. Find all network sources (Python)
+        network_sources = []
+        for node in self.nodes.values():
+            if node.type == 'source' and 'request' in node.label:
+                # Check metadata for Route
+                route = node.metadata.get('route')
+                if route:
+                    network_sources.append((node, route))
+
+        # 3. Match and Link
+        for sink_node, sink_url in network_sinks:
+            for source_node, source_route in network_sources:
+                # Simple matching: check if route is in URL or vice versa
+                # e.g. sink_url='/api/signup', source_route='/api/signup'
+                if sink_url == source_route or sink_url.endswith(source_route):
+                    # Create a bridge edge
+                    self.add_edge(GraphEdge(
+                        source_id=sink_node.id,
+                        target_id=source_node.id,
+                        type='network_flow',
+                        label='HTTP Request',
+                        metadata={'protocol': 'http'}
+                    ))

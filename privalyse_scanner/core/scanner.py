@@ -198,14 +198,28 @@ class PrivalyseScanner:
                     ))
                     
                     for flow in flows:
+                        # Determine node types
+                        source_type = "variable"
+                        source_label = flow.source_var
+                        if flow.source_var.startswith("SOURCE:"):
+                            source_type = "source"
+                            source_label = flow.source_var.replace("SOURCE:", "")
+                        elif flow.source_var in ("logging", "print"):
+                            source_type = "sink"
+                            
+                        target_type = "variable"
+                        target_label = flow.target_var
+                        if flow.target_var in ("logging", "print"):
+                            target_type = "sink"
+                        
                         # Create nodes for source and target vars
                         source_id = f"{file_id}:{flow.source_line}:{flow.source_var}"
                         target_id = f"{file_id}:{flow.target_line}:{flow.target_var}"
                         
                         self.graph.add_node(GraphNode(
                             id=source_id, 
-                            type="variable", 
-                            label=flow.source_var, 
+                            type=source_type, 
+                            label=source_label, 
                             file_path=str(file_path), 
                             line_number=flow.source_line,
                             metadata={"context": flow.context}
@@ -213,8 +227,8 @@ class PrivalyseScanner:
                         
                         self.graph.add_node(GraphNode(
                             id=target_id, 
-                            type="variable", 
-                            label=flow.target_var, 
+                            type=target_type, 
+                            label=target_label, 
                             file_path=str(file_path), 
                             line_number=flow.target_line,
                             metadata={"context": flow.context}

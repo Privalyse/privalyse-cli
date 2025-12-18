@@ -26,17 +26,28 @@ class TestFlowGraph(unittest.TestCase):
         log_nodes = [n for n in nodes.values() if n['label'] == 'log_message']
         self.assertTrue(len(log_nodes) > 0, "Should find 'log_message' variable node")
         
+        # Find Source node
+        source_nodes = [n for n in nodes.values() if n['type'] == 'source']
+        self.assertTrue(len(source_nodes) > 0, "Should find source node")
+        
+        # Find Sink node
+        sink_nodes = [n for n in nodes.values() if n['type'] == 'sink']
+        self.assertTrue(len(sink_nodes) > 0, "Should find sink node")
+        
         # Verify Edges
         edges = graph['edges']
         # We expect flow from email -> log_message (via process_user_data or direct assignment if simplified)
         
         # Check for at least one data flow edge
         data_flow_edges = [e for e in edges if e['type'] == 'data_flow']
-        self.assertTrue(len(data_flow_edges) > 0, "Should have data flow edges")
+        self.assertTrue(len(data_flow_edges) >= 3, "Should have at least 3 edges (Source->Var, Var->Var, Var->Sink)")
         
         # Check if we captured the flow type
         flow_types = [e['label'] for e in data_flow_edges]
         print(f"Captured flow types: {flow_types}")
+        self.assertIn('source', flow_types)
+        self.assertIn('call', flow_types)
+        self.assertIn('sink', flow_types)
         
         # Check for findings
         findings = results['findings']

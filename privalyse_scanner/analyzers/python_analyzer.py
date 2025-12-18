@@ -6,7 +6,7 @@ from typing import List, Dict, Any, Optional, Set, Tuple
 from pathlib import Path
 
 from ..models.finding import Finding, Severity, ClassificationResult
-from ..models.taint import TaintTracker
+from ..models.taint import TaintTracker, DataFlowEdge
 from ..utils.classification import classify_pii_enhanced
 from ..utils.helpers import extract_ast_snippet, should_filter_log_finding, should_filter_db_finding
 from ..config.framework_patterns import (
@@ -224,6 +224,17 @@ class PythonAnalyzer(BaseAnalyzer):
                                             taint_source=f"request parameter '{field_name}'",
                                             context=self.current_function
                                         )
+                                        
+                                        # Add Source Edge
+                                        taint_tracker.data_flow_edges.append(DataFlowEdge(
+                                            source_var=f"SOURCE:request.{func_attr.value.attr}['{field_name}']",
+                                            target_var=target_name,
+                                            source_line=node.lineno,
+                                            target_line=node.lineno,
+                                            flow_type="source",
+                                            transformation="extraction",
+                                            context=self.current_function
+                                        ))
                         
                         # ===== NEW: Hardcoded Secret Detection =====
                         if isinstance(node.value, ast.Constant) and isinstance(node.value.value, str):
@@ -664,8 +675,24 @@ class PythonAnalyzer(BaseAnalyzer):
                             taint_tracker.tainted_vars[v].taint_source
                             for v in tainted_args
                             if v in taint_tracker.tainted_vars
-                        ] if tainted_args else []
+                        ] if tainted_args else [],
+                        # Graph Info
+                        sink_node="logging",
+                        flow_path=tainted_args
                     )
+                    
+                    # Add Sink Edges
+                    for arg in tainted_args:
+                        taint_tracker.data_flow_edges.append(DataFlowEdge(
+                            source_var=arg,
+                            target_var="logging",
+                            source_line=taint_tracker.get_taint(arg).source_line if taint_tracker.get_taint(arg) else node.lineno,
+                            target_line=node.lineno,
+                            flow_type="sink",
+                            transformation="logging",
+                            context=self.current_function
+                        ))
+                        
                     findings.append(finding)
             
             def _handle_print_call(self, node, tainted_args, tainted_pii_types):

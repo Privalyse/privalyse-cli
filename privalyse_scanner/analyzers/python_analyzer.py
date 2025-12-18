@@ -182,13 +182,36 @@ class PythonAnalyzer(BaseAnalyzer):
             
             def __init__(self):
                 self.current_function = None
+                self.current_route = None
                 super().__init__()
 
             def visit_FunctionDef(self, node: ast.FunctionDef):
+                # import logging
+                # logging.warning(f"DEBUG: Visiting function {node.name}")
                 old_function = self.current_function
+                old_route = self.current_route
+                
+                # Check decorators for Flask routes
+                for decorator in node.decorator_list:
+                    # import logging
+                    # logging.warning(f"DEBUG: Decorator: {decorator}")
+                    if isinstance(decorator, ast.Call) and isinstance(decorator.func, ast.Attribute):
+                        if decorator.func.attr == 'route':
+                            if decorator.args and isinstance(decorator.args[0], ast.Constant):
+                                self.current_route = decorator.args[0].value
+                                # import logging
+                                # logging.warning(f"DEBUG: Found route {self.current_route} for function {node.name}")
+
                 self.current_function = node.name
+                
+                # Track function parameters
+                param_names = [arg.arg for arg in node.args.args]
+                if hasattr(taint_tracker, 'function_params'):
+                    taint_tracker.function_params[node.name] = param_names
+                
                 self.generic_visit(node)
                 self.current_function = old_function
+                self.current_route = old_route
 
             def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef):
                 old_function = self.current_function
@@ -202,6 +225,77 @@ class PythonAnalyzer(BaseAnalyzer):
                     if isinstance(target, ast.Name):
                         target_name = target.id
                         
+                        # ===== NEW: Request Object Tracking (data = request.json) =====
+                        if isinstance(node.value, ast.Attribute):
+                            if isinstance(node.value.value, ast.Name) and node.value.value.id == 'request':
+                                # import logging
+                                # logging.warning(f"DEBUG: Found request.{node.value.attr} assigned to {target_name} in function {self.current_function}")
+                                if node.value.attr in ('json', 'form', 'args', 'values'):
+                                    context_str = self.current_function
+                                    if self.current_route:
+                                        context_str = f"{self.current_function} (Route: {self.current_route})"
+
+                                    taint_tracker.mark_tainted(
+                                        var_name=target_name,
+                                        pii_types=['user_input'],
+                                        source_line=node.lineno,
+                                        source_node=f'request.{node.value.attr}',
+                                        taint_source=f"request body",
+                                        context=context_str
+                                    )
+                                    
+                                    # Add Source Edge
+                                    taint_tracker.data_flow_edges.append(DataFlowEdge(
+                                        source_var=f"SOURCE:request.{node.value.attr}",
+                                        target_var=target_name,
+                                        source_line=node.lineno,
+                                        target_line=node.lineno,
+                                        flow_type="source",
+                                        transformation="extraction",
+                                        context=context_str
+                                    ))
+
+                        # ===== NEW: Dictionary Extraction from Tainted Object (email = data.get('email')) =====
+                        if isinstance(node.value, ast.Call) and isinstance(node.value.func, ast.Attribute):
+                            if node.value.func.attr == 'get':
+                                obj_name = None
+                                if isinstance(node.value.func.value, ast.Name):
+                                    obj_name = node.value.func.value.id
+                                
+                                if obj_name:
+                                    # import logging
+                                    # logging.warning(f"DEBUG: Found .get() on {obj_name}. Tainted? {bool(taint_tracker.get_taint(obj_name))}")
+                                    pass
+
+                                if obj_name and taint_tracker.get_taint(obj_name):
+                                    if node.value.args and isinstance(node.value.args[0], ast.Constant):
+                                        field_name = node.value.args[0].value
+                                        pii_types = taint_tracker.infer_pii_type(field_name)
+                                        
+                                        if pii_types:
+                                            context_str = self.current_function
+                                            if self.current_route:
+                                                context_str = f"{self.current_function} (Route: {self.current_route})"
+                                            
+                                            taint_tracker.mark_tainted(
+                                                var_name=target_name,
+                                                pii_types=pii_types,
+                                                source_line=node.lineno,
+                                                source_node='dict.get',
+                                                taint_source=f"field '{field_name}'",
+                                                context=context_str
+                                            )
+                                            
+                                            taint_tracker.data_flow_edges.append(DataFlowEdge(
+                                                source_var=obj_name,
+                                                target_var=target_name,
+                                                source_line=node.lineno,
+                                                target_line=node.lineno,
+                                                flow_type="extraction",
+                                                transformation=f"get('{field_name}')",
+                                                context=context_str
+                                            ))
+
                         # ===== NEW: Request parameter tracking =====
                         # Detect: email = request.args.get('email')
                         if isinstance(node.value, ast.Call) and isinstance(node.value.func, ast.Attribute):
@@ -216,13 +310,17 @@ class PythonAnalyzer(BaseAnalyzer):
                                     # Infer PII type from field name
                                     pii_types = taint_tracker.infer_pii_type(field_name)
                                     if pii_types:
+                                        context_str = self.current_function
+                                        if self.current_route:
+                                            context_str = f"{self.current_function} (Route: {self.current_route})"
+
                                         taint_tracker.mark_tainted(
                                             var_name=target_name,
                                             pii_types=pii_types,
                                             source_line=node.lineno,
                                             source_node='request.args.get',
                                             taint_source=f"request parameter '{field_name}'",
-                                            context=self.current_function
+                                            context=context_str
                                         )
                                         
                                         # Add Source Edge
@@ -233,7 +331,7 @@ class PythonAnalyzer(BaseAnalyzer):
                                             target_line=node.lineno,
                                             flow_type="source",
                                             transformation="extraction",
-                                            context=self.current_function
+                                            context=context_str
                                         ))
                         
                         # ===== NEW: Hardcoded Secret Detection =====
@@ -436,16 +534,6 @@ class PythonAnalyzer(BaseAnalyzer):
                                                 target_name, ['email', 'name'], node.lineno,
                                                 "db_query_await", f"SELECT {','.join(queried_models)}"
                                             )
-                
-                self.generic_visit(node)
-            
-            def visit_FunctionDef(self, node: ast.FunctionDef):
-                """Track function parameters for taint analysis"""
-                param_names = [arg.arg for arg in node.args.args]
-                taint_tracker.function_params[node.name] = param_names
-                
-                # STRICT MODE: Do not infer taint from parameter names
-                # We only track taint from known sources
                 
                 self.generic_visit(node)
             

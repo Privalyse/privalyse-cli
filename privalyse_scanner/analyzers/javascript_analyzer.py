@@ -5,6 +5,7 @@ from typing import List, Dict, Any, Optional, Tuple
 from pathlib import Path
 
 from ..models.finding import Finding, ClassificationResult
+from ..models.taint import DataFlowEdge
 from .base_analyzer import BaseAnalyzer, AnalyzedSymbol, AnalyzedImport
 
 
@@ -15,8 +16,9 @@ class JSTaintTracker:
     """
     def __init__(self):
         self.tainted_vars: Dict[str, Dict[str, Any]] = {} # name -> {pii_types: [], source: str}
+        self.data_flow_edges: List[DataFlowEdge] = []
 
-    def mark_tainted(self, name: str, pii_types: List[str], source: str):
+    def mark_tainted(self, name: str, pii_types: List[str], source: str, context: Optional[str] = None):
         """Mark a variable as tainted with specific PII types."""
         if not name or not pii_types:
             return
@@ -28,6 +30,18 @@ class JSTaintTracker:
         current_types = set(self.tainted_vars[name]['pii_types'])
         current_types.update(pii_types)
         self.tainted_vars[name]['pii_types'] = list(current_types)
+
+    def add_edge(self, source: str, target: str, line: int, flow_type: str, transformation: Optional[str] = None, context: Optional[str] = None):
+        """Add a data flow edge."""
+        self.data_flow_edges.append(DataFlowEdge(
+            source_var=source,
+            target_var=target,
+            source_line=line, # Simplified: assume source is near
+            target_line=line,
+            flow_type=flow_type,
+            transformation=transformation,
+            context=context
+        ))
 
     def get_taint(self, name: str) -> Optional[Dict[str, Any]]:
         """Get taint info for a variable."""
@@ -234,7 +248,8 @@ class JavaScriptAnalyzer(BaseAnalyzer):
         # 9. Analyze Hardcoded Secrets
         findings.extend(self._analyze_secrets(file_path, code))
         
-        return findings, data_flows
+        # Return findings and collected data flow edges
+        return findings, self.taint_tracker.data_flow_edges
 
     def _analyze_secrets(self, file_path: Path, code: str) -> List[Finding]:
         """
@@ -434,6 +449,7 @@ class JavaScriptAnalyzer(BaseAnalyzer):
         sanitization_pattern = re.compile(r"(hash|encrypt|mask|sanitize|anonymize)", re.IGNORECASE)
 
         current_sink = None
+        current_sink_url = None
         
         for i, line in enumerate(lines):
             line_num = i + 1
@@ -499,6 +515,15 @@ class JavaScriptAnalyzer(BaseAnalyzer):
             # 6. Sink Detection (Multiline State Machine)
             if match := sink_start_pattern.search(line_stripped):
                 current_sink = match.group(1)
+                # Extract URL for network sinks
+                if 'axios' in current_sink or 'fetch' in current_sink:
+                    url_match = re.search(r"['\"]([^'\"]+)['\"]", line_stripped)
+                    if url_match:
+                        current_sink_url = url_match.group(1)
+                    else:
+                        current_sink_url = None
+                else:
+                    current_sink_url = None
             
             if current_sink:
                 # Handle template literals: keep only the interpolated parts
@@ -526,6 +551,15 @@ class JavaScriptAnalyzer(BaseAnalyzer):
                             continue
                             
                         taint_info = self.taint_tracker.get_taint(word)
+                        
+                        # Add Data Flow Edge
+                        self.taint_tracker.add_edge(
+                            source=word,
+                            target=current_sink,
+                            line=line_num,
+                            flow_type="sink",
+                            context=f"URL: {current_sink_url}" if current_sink_url else None
+                        )
                         
                         # Determine rule
                         rule = "JS_DATA_LEAK"

@@ -51,6 +51,10 @@ class MarkdownExporter:
         # Data Flow Analysis (if available)
         if scan_result.get('flows'):
             sections.append(self._generate_dataflow_section(scan_result))
+            
+        # Visual Data Flow Graph (Mermaid)
+        if scan_result.get('semantic_graph'):
+            sections.append(self._generate_mermaid_graph(scan_result))
         
         # GDPR Compliance
         sections.append(self._generate_compliance_section(scan_result))
@@ -402,6 +406,76 @@ Critical data paths detected in your application:
                 section.append(f"- **{source}** → **{target}** (Line {line})")
         
         return '\n'.join(section)
+
+    def _generate_mermaid_graph(self, scan_result: Dict[str, Any]) -> str:
+        """Generate Mermaid.js graph visualization"""
+        graph_data = scan_result.get('semantic_graph', {})
+        nodes = graph_data.get('nodes', [])
+        edges = graph_data.get('edges', [])
+        
+        if not nodes or not edges:
+            return ""
+            
+        lines = ["## 🗺️ Visual Data Flow Graph", "", "```mermaid", "graph LR"]
+        
+        # Add nodes with styling
+        lines.append("  %% Styles")
+        lines.append("  classDef source fill:#ffcccc,stroke:#ff0000,stroke-width:2px;")
+        lines.append("  classDef sink fill:#ccccff,stroke:#0000ff,stroke-width:2px;")
+        lines.append("  classDef variable fill:#eeeeee,stroke:#333333;")
+        lines.append("  classDef file fill:#ffffff,stroke:#999999,stroke-dasharray: 5 5;")
+        
+        # Map original IDs to clean IDs to avoid syntax errors
+        id_map = {n['id']: f"node_{i}" for i, n in enumerate(nodes)}
+        
+        # Add Nodes
+        for node in nodes:
+            clean_node_id = id_map.get(node['id'])
+            if not clean_node_id: continue
+            
+            label = node['label'].replace('"', "'")
+            node_type = node['type']
+            
+            # Shape based on type
+            shape_open = "["
+            shape_close = "]"
+            if node_type == 'file':
+                shape_open = "(("
+                shape_close = "))"
+            elif node_type == 'sink':
+                shape_open = "{{"
+                shape_close = "}}"
+            elif node_type == 'source':
+                shape_open = "(("
+                shape_close = "))"
+            
+            # Apply class
+            css_class = "variable"
+            if node_type in ['source', 'sink', 'file']:
+                css_class = node_type
+            
+            lines.append(f'  {clean_node_id}{shape_open}"{label}"{shape_close}::: {css_class}')
+            
+        # Add Edges
+        for edge in edges:
+            src = id_map.get(edge['source'])
+            dst = id_map.get(edge['target'])
+            
+            if src and dst:
+                label = edge.get('label', '')
+                arrow = "-->"
+                
+                if edge['type'] == 'network_flow':
+                    arrow = "-.->|HTTP|"
+                elif label:
+                    # Sanitize label
+                    label = label.replace('"', "'")
+                    arrow = f"-->|{label}|"
+                
+                lines.append(f"  {src} {arrow} {dst}")
+                
+        lines.append("```")
+        return "\n".join(lines)
     
     def _generate_compliance_section(self, scan_result: Dict[str, Any]) -> str:
         """Generate GDPR compliance section"""

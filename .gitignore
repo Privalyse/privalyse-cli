@@ -71,3 +71,4 @@ htmlcov/
 demo_stage/
 *.cast
 
+.github/copilot-instructions.md

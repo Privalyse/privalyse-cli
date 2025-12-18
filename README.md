@@ -1,23 +1,25 @@
-# 🔒 Privalyse – Catch Security Leaks in AI-Assisted Codebases
+# 🔒 Privalyse – Make Invisible Data Flows Visible
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![PyPI](https://img.shields.io/pypi/v/privalyse-cli)](https://pypi.org/project/privalyse-cli/)
 [![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
 [![X Follow](https://img.shields.io/twitter/follow/privalyse_dev?style=social)](https://x.com/privalyse_dev)
 
-> **AI coding, rapid prototyping, team collaboration?** \
-> **Your code works, but security issues can easily slip through.** \
-> **Privalyse catches them before production!**
+> **Code is a black box. Data moves through invisible paths.**
+> **Privalyse makes these paths explicit.**
 
-We are generating code faster than ever, but we are also losing some control over its security.
+We are generating code faster than ever, but we are losing sight of where our data actually goes.
+LLMs write logic, but they don't see the flow. They happily pipe PII into logs, send secrets to third-party APIs, or expose internal state.
 
-LLMs are fantastic at logic but leak security and privacy context. They happily hardcode API keys, log PII, or send sensitive data over HTTP because they lack the "security intuition" a human developer builds over years.
+**Privalyse is not just a linter.** It builds a **Semantic Data Flow Graph** of your application to tell **Flow Stories**:
+*   ❌ *Traditional Linter:* "Variable `user_email` used in line 42."
+*   ✅ *Privalyse:* "User Email (Source) → Prompt Template → OpenAI API (Sink) → Logs (Leak)."
 
-Privalyse uses advanced **Cross-File Taint Tracking** to catch security vulnerabilities and personal data leaks in your Code. With its deterministic static ruleset, it serves as the perfect counterpart to **AI-assisted coding**: ensuring reproducible results and providing a safety net to recheck your entire codebase before deployment.
+With its deterministic static analysis engine, it serves as the perfect counterpart to **AI-assisted coding**: ensuring reproducible results and providing a safety net to recheck your entire codebase before deployment.
 
-⭐️ Star if you find this usefull.
+⭐️ Star if you believe in visible data flows.
 
-**🚀 Alpha Release** - We're building the privacy scanner that modern development deserves. Zero config, instant insights, built for speed - no excuses!
+**🚀 Alpha Release** - We're building the privacy scanner that modern development deserves. Zero config, instant insights, built for speed.
 
 📚 [Quick Start](#quick-start) • 🔍 [What We Detect](DETECTION_RULES.md) • 🗺️ [Roadmap](#roadmap) • 🐛 [Report Bug](https://github.com/privalyse/privalyse-cli/issues) • ✨ [Request Feature](https://github.com/privalyse/privalyse-cli/issues)
 

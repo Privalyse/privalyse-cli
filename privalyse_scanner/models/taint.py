@@ -30,6 +30,17 @@ class DataFlowEdge:
     transformation: Optional[str] = None
     context: Optional[str] = None  # Context of the flow (e.g. function name)
 
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "source_var": self.source_var,
+            "target_var": self.target_var,
+            "source_line": self.source_line,
+            "target_line": self.target_line,
+            "flow_type": self.flow_type,
+            "transformation": self.transformation,
+            "context": self.context
+        }
+
 
 class TaintTracker:
     """

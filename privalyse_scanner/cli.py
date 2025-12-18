@@ -12,10 +12,30 @@ import argparse
 import logging
 from pathlib import Path
 
+# Try to import rich, fail gracefully if not installed
+try:
+    from privalyse_scanner.utils import ui
+    HAS_RICH = True
+except ImportError:
+    HAS_RICH = False
+
 from privalyse_scanner import PrivalyseScanner
 from privalyse_scanner.models.config import ScanConfig
+from privalyse_scanner.models.finding import Finding, ClassificationResult
 from privalyse_scanner.exporters import MarkdownExporter, HTMLExporter
 from privalyse_scanner.utils.visualizer import FlowVisualizer
+
+
+class PrivalyseJSONEncoder(json.JSONEncoder):
+    """Custom JSON encoder for Privalyse objects"""
+    def default(self, obj):
+        if hasattr(obj, 'to_dict'):
+            return obj.to_dict()
+        if isinstance(obj, set):
+            return list(obj)
+        if isinstance(obj, Path):
+            return str(obj)
+        return super().default(obj)
 
 
 def setup_logging(debug: bool = False, quiet: bool = False):
@@ -90,7 +110,10 @@ Examples:
     if args.init:
         ignore_path = Path.cwd() / '.privalyseignore'
         if ignore_path.exists():
-            print(f"⚠️  {ignore_path} already exists.")
+            if HAS_RICH:
+                ui.print_warning(f"{ignore_path} already exists.")
+            else:
+                print(f"⚠️  {ignore_path} already exists.")
             sys.exit(0)
         
         with open(ignore_path, 'w') as f:
@@ -104,12 +127,21 @@ Examples:
             f.write("# Ignore specific rules in specific files\n")
             f.write("# HARDCODED_SECRET:config/dev_settings.py\n")
         
-        print(f"✅ Created {ignore_path}")
+        if HAS_RICH:
+            ui.print_success(f"Created {ignore_path}")
+        else:
+            print(f"✅ Created {ignore_path}")
         sys.exit(0)
     
     # Setup logging
     setup_logging(debug=args.debug, quiet=args.quiet)
     logger = logging.getLogger(__name__)
+    
+    # Rich Banner
+    if HAS_RICH:
+        ui.print_banner()
+    else:
+        logger.info("🔍 Privalyse Scanner v0.1 (Modular)")
     
     # Create config
     config = ScanConfig(
@@ -142,11 +174,16 @@ Examples:
         config.exclude_patterns.extend(args.exclude)
     
     # Create and run scanner
-    logger.info("🔍 Privalyse Scanner v0.1 (Modular)")
-    logger.info(f"📁 Scanning: {config.root_path}")
-    
-    scanner = PrivalyseScanner(config)
-    results = scanner.scan()
+    if HAS_RICH and not args.debug and not args.verbose:
+        with ui.create_progress() as progress:
+            task = progress.add_task("Scanning codebase...", total=None)
+            scanner = PrivalyseScanner(config)
+            results = scanner.scan()
+            progress.update(task, completed=100)
+    else:
+        logger.info(f"📁 Scanning: {config.root_path}")
+        scanner = PrivalyseScanner(config)
+        results = scanner.scan()
     
     # Write results in requested format
     output_path = Path(args.out)
@@ -191,32 +228,61 @@ Examples:
                     results['dependency_graph'][k] = list(v)
 
         with output_path.open('w') as f:
-            json.dump(results, f, indent=2)
+            json.dump(results, f, indent=2, cls=PrivalyseJSONEncoder)
     
     # Print summary
     compliance = results['compliance']
-    findings_count = results['meta']['total_findings']
+    findings_data = results['findings']
     
-    # Color-coded compliance score
-    score = compliance['score']
-    # Use ASCII fallback for Windows terminals that don't support unicode
-    if sys.platform == 'win32':
-        if score >= 90:
-            emoji = "[PASS]"
-        elif score >= 70:
-            emoji = "[WARN]"
-        else:
-            emoji = "[FAIL]"
+    # Convert dict findings back to objects for UI if needed
+    findings_objects = []
+    for f in findings_data:
+        # Reconstruct ClassificationResult
+        class_data = f.get('classification', {})
+        classification = ClassificationResult(
+            pii_types=class_data.get('pii_types', []),
+            sectors=class_data.get('sectors', []),
+            severity=class_data.get('severity', 'info'),
+            article=class_data.get('article'),
+            legal_basis_required=class_data.get('legal_basis_required', False),
+            category=class_data.get('category', 'unknown'),
+            confidence=class_data.get('confidence', 0.0),
+            reasoning=class_data.get('reasoning', ''),
+            gdpr_articles=class_data.get('gdpr_articles', [])
+        )
+
+        finding_obj = Finding(
+            rule=f.get('rule', 'UNKNOWN'),
+            severity=f.get('severity', 'info'),
+            file=f.get('file', ''),
+            line=f.get('line', 0),
+            snippet=f.get('snippet', ''),
+            classification=classification,
+            flow_path=f.get('flow_path', [])
+        )
+        findings_objects.append(finding_obj)
+
+    if HAS_RICH:
+        ui.print_findings_summary(findings_objects, compliance)
+        ui.print_success(f"Report generated: {output_path}")
         
-        print(f"\n{emoji} Compliance Score: {score}/100 ({compliance['status']})")
-        print(f"Findings: {findings_count} total")
-        if compliance.get('critical_findings'):
-            print(f"Critical: {compliance['critical_findings']}")
-        if compliance.get('high_findings'):
-            print(f"High: {compliance['high_findings']}")
-        print(f"Report: {output_path}")
-        logger.info("Scan complete")
+        # Visual Summary of Top Risks
+        ui.console.print("\n[bold]🔍 Top Data Flow Risks:[/bold]")
+        
+        # Filter for high/critical with flow paths
+        risky_flows = [f for f in findings_objects if f.severity in ['critical', 'high'] and f.flow_path]
+        
+        for i, finding in enumerate(risky_flows[:3]): # Show top 3
+            ui.print_flow_tree(finding, None)
+            
+        if len(risky_flows) > 3:
+            ui.console.print(f"[italic]... and {len(risky_flows) - 3} more flow risks in the report.[/italic]")
+            
     else:
+        # Fallback to old output
+        findings_count = results['meta']['total_findings']
+        score = compliance['score']
+        
         if score >= 90:
             emoji = "🟢"
         elif score >= 70:
@@ -237,7 +303,7 @@ Examples:
         
         logger.info("✅ Scan complete")
     
-    return 0 if score >= 70 else 1
+    return 0 if compliance['score'] >= 70 else 1
 
 
 def cli():

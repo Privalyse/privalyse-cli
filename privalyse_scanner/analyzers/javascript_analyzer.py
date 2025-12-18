@@ -585,7 +585,8 @@ class JavaScriptAnalyzer(BaseAnalyzer):
                                 legal_basis_required=True
                             ),
                             tainted_variables=[word],
-                            taint_sources=[taint_info['source']]
+                            taint_sources=[taint_info['source']],
+                            flow_path=[taint_info['source'], word, current_sink] if current_sink else [taint_info['source'], word]
                         )
                         findings.append(finding)
                 

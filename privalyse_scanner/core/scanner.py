@@ -6,6 +6,7 @@ import logging
 
 from ..models.config import ScanConfig
 from ..models.finding import Finding
+from ..models.graph import SemanticDataFlowGraph, GraphNode, GraphEdge
 from ..analyzers.python_analyzer import PythonAnalyzer
 from ..analyzers.javascript_analyzer import JavaScriptAnalyzer
 from ..analyzers.cross_file_analyzer import CrossFileAnalyzer
@@ -50,6 +51,9 @@ class PrivalyseScanner:
         self.symbol_table = GlobalSymbolTable()
         # Cross-file taint propagation analyzer
         self.cross_file_analyzer = None  # Initialized after import/symbol analysis
+        
+        # Semantic Data Flow Graph
+        self.graph = SemanticDataFlowGraph()
         
         # Load ignore list
         self.ignore_list = self._load_ignore_list()
@@ -179,6 +183,50 @@ class PrivalyseScanner:
                     findings, flows = self.python_analyzer.analyze_file(
                         file_path, code, consts=consts, envmap=envmap
                     )
+                    
+                    # ===== POPULATE GRAPH =====
+                    try:
+                        file_id = str(file_path.relative_to(self.config.root_path)) if self.config.root_path else file_path.name
+                    except ValueError:
+                        file_id = file_path.name
+                        
+                    self.graph.add_node(GraphNode(
+                        id=file_id,
+                        type="file",
+                        label=file_path.name,
+                        file_path=str(file_path)
+                    ))
+                    
+                    for flow in flows:
+                        # Create nodes for source and target vars
+                        source_id = f"{file_id}:{flow.source_line}:{flow.source_var}"
+                        target_id = f"{file_id}:{flow.target_line}:{flow.target_var}"
+                        
+                        self.graph.add_node(GraphNode(
+                            id=source_id, 
+                            type="variable", 
+                            label=flow.source_var, 
+                            file_path=str(file_path), 
+                            line_number=flow.source_line,
+                            metadata={"context": flow.context}
+                        ))
+                        
+                        self.graph.add_node(GraphNode(
+                            id=target_id, 
+                            type="variable", 
+                            label=flow.target_var, 
+                            file_path=str(file_path), 
+                            line_number=flow.target_line,
+                            metadata={"context": flow.context}
+                        ))
+                        
+                        self.graph.add_edge(GraphEdge(
+                            source_id=source_id,
+                            target_id=target_id,
+                            type="data_flow",
+                            label=flow.flow_type,
+                            metadata={"transformation": flow.transformation}
+                        ))
                     
                     if self.config.verbose:
                         logger.info(f"  → {len(findings)} findings in {file_path.name}")
@@ -342,6 +390,7 @@ class PrivalyseScanner:
             },
             "compliance": self._calculate_compliance(all_findings),
             "dependency_graph": dependency_graph,  # Include graph in results
+            "semantic_graph": self.graph.to_dict(),
         }
     
     def _calculate_compliance(self, findings: List[Finding]) -> Dict[str, Any]:

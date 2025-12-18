@@ -100,7 +100,8 @@ class PythonAnalyzer(BaseAnalyzer):
         
         visitor.visit(tree)
         
-        return findings, flows
+        # Return findings and collected data flow edges
+        return findings, taint_tracker.data_flow_edges
 
     def extract_symbols(self, code: str) -> List[AnalyzedSymbol]:
         """
@@ -393,6 +394,11 @@ class PythonAnalyzer(BaseAnalyzer):
                                     target_name, pii_types, node.lineno,
                                     "function_call", func_name
                                 )
+                            
+                            # Propagate taint from arguments (e.g. x = func(tainted_arg))
+                            taint_tracker.propagate_through_assignment(
+                                target_name, node.value, node.lineno, context=self.current_function
+                            )
                         
                         # Phase 3: Handle await expressions (await db.execute(...))
                         elif isinstance(node.value, ast.Await):

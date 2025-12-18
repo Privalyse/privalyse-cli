@@ -247,6 +247,17 @@ class TaintTracker:
                     pii_types = base_taint.pii_types if base_taint else ['unknown']
                 
                 self.mark_tainted(target, pii_types, line, "subscript", context=context)
+                
+                # Add edge
+                if isinstance(source.value, ast.Name) and source.value.id in self.tainted_vars:
+                     self.data_flow_edges.append(DataFlowEdge(
+                        source_var=source.value.id,
+                        target_var=target,
+                        source_line=self.tainted_vars[source.value.id].source_line,
+                        target_line=line,
+                        flow_type="subscript",
+                        context=context
+                    ))
         
         # Case 4: Function call (x = get_user())
         elif isinstance(source, ast.Call):
@@ -269,6 +280,19 @@ class TaintTracker:
                     taint_source="function_result",
                     context=context
                 )
+                
+                # Add edges for each tainted arg
+                for arg in tainted_args:
+                    if isinstance(arg, ast.Name):
+                         self.data_flow_edges.append(DataFlowEdge(
+                            source_var=arg.id,
+                            target_var=target,
+                            source_line=self.tainted_vars[arg.id].source_line,
+                            target_line=line,
+                            flow_type="call",
+                            transformation="function_call",
+                            context=context
+                        ))
     
     def track_function_call(self, call_node: ast.Call, line: int) -> List[str]:
         """Track tainted arguments in function calls and return tainted param names"""

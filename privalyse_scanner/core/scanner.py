@@ -41,10 +41,12 @@ class PrivalyseScanner:
         self.python_analyzer = PythonAnalyzer()
         self.javascript_analyzer = JavaScriptAnalyzer()
         # Advanced security analyzers
-        self.injection_analyzer = InjectionAnalyzer()
-        self.crypto_analyzer = CryptoAnalyzer()
-        self.security_analyzer = SecurityAnalyzer()
-        self.infrastructure_analyzer = InfrastructureAnalyzer()
+        # DISABLED: InjectionAnalyzer, CryptoAnalyzer, SecurityAnalyzer, InfrastructureAnalyzer
+        # Reason: Focus strictly on PII and GDPR compliance, removing generic security noise.
+        self.injection_analyzer = None # InjectionAnalyzer()
+        self.crypto_analyzer = None # CryptoAnalyzer()
+        self.security_analyzer = None # SecurityAnalyzer()
+        self.infrastructure_analyzer = None # InfrastructureAnalyzer()
         
         # Import resolution for cross-file analysis
         self.import_resolver = ImportResolver(root_path=self.config.root_path)
@@ -251,17 +253,19 @@ class PrivalyseScanner:
 
                 elif file_path.name in self.config.docker_files or file_path.suffix in self.config.config_extensions:
                     # Analyze Infrastructure files
-                    logger.info(f"Analyzing Infrastructure file: {file_path.name}")
-                    findings = self.infrastructure_analyzer.analyze_file(file_path, code)
+                    # DISABLED: Infrastructure analysis for PII-only focus
+                    pass
+                    # logger.info(f"Analyzing Infrastructure file: {file_path.name}")
+                    # findings = self.infrastructure_analyzer.analyze_file(file_path, code)
                     
-                    if self.config.verbose:
-                        logger.info(f"  → {len(findings)} findings in {file_path.name}")
+                    # if self.config.verbose:
+                    #     logger.info(f"  → {len(findings)} findings in {file_path.name}")
                     
-                    # Store findings
-                    module_name = f"infra:{file_path.name}"
-                    module_findings[module_name] = findings
-                    all_findings.extend(findings)
-                    # No data flows for infra files usually
+                    # # Store findings
+                    # module_name = f"infra:{file_path.name}"
+                    # module_findings[module_name] = findings
+                    # all_findings.extend(findings)
+                    # # No data flows for infra files usually
                 
             except Exception as e:
                 logger.warning(f"Error scanning {file_path}: {e}")

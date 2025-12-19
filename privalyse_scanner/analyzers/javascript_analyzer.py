@@ -758,7 +758,9 @@ class JavaScriptAnalyzer(BaseAnalyzer):
                             sectors=[],
                             article="Art. 6",
                             legal_basis_required=True
-                        )
+                        ),
+                        # Add flow path to prevent "Unknown Source"
+                        flow_path=["Data Model (Schema)", field_name, "Database"]
                     )
                     findings.append(finding)
 
@@ -783,7 +785,9 @@ class JavaScriptAnalyzer(BaseAnalyzer):
                             sectors=[],
                             article="Art. 6",
                             legal_basis_required=True
-                        )
+                        ),
+                        # Add flow path to prevent "Unknown Source"
+                        flow_path=["Data Model (Entity)", field_name, "Database"]
                     )
                     findings.append(finding)
                     
@@ -959,6 +963,9 @@ class JavaScriptAnalyzer(BaseAnalyzer):
                         # If the pattern has a group, use it as the field name, otherwise use the PII type
                         field_name = match.group(1) if match.lastindex and match.lastindex >= 1 else pii_type
                         
+                        # Define source based on context (Form Input)
+                        source_node = "User Input (Form)"
+                        
                         finding = Finding(
                             rule=f"FORM_FIELD_{pii_type.upper()}",
                             severity=config["severity"],
@@ -974,7 +981,9 @@ class JavaScriptAnalyzer(BaseAnalyzer):
                                 legal_basis_required=True,
                                 sectors=[],
                                 reasoning=config["description"]
-                            )
+                            ),
+                            # Add flow path to prevent "Unknown Source"
+                            flow_path=[source_node, field_name, "Form State"]
                         )
                         findings.append(finding)
                         break  # Found match for this PII type, try next PII type (allows multiple per line)

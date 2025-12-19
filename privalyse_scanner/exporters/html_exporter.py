@@ -75,8 +75,8 @@ class HTMLExporter:
 <body>
     <div class="container">
         {header}
-        {global_graph_section}
         {score_section}
+        {global_graph_section}
         {chart_section}
         {top_flows_section}
         {findings_section}

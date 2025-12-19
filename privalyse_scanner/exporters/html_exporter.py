@@ -829,7 +829,10 @@ class HTMLExporter:
                                 'line-color': '#cbd5e1',
                                 'target-arrow-color': '#cbd5e1',
                                 'target-arrow-shape': 'triangle',
-                                'curve-style': 'bezier',
+                                'curve-style': 'taxi',
+                                'taxi-direction': 'auto',
+                                'taxi-turn': 20,
+                                'taxi-turn-min-distance': 5,
                                 'arrow-scale': 1.2
                             }}
                         }},
@@ -839,7 +842,8 @@ class HTMLExporter:
                                 'width': 4,
                                 'line-color': '#ef4444',
                                 'target-arrow-color': '#ef4444',
-                                'line-style': 'solid'
+                                'line-style': 'solid',
+                                'z-index': 999
                             }}
                         }},
                         {{
@@ -854,8 +858,9 @@ class HTMLExporter:
                     layout: {{
                         name: 'dagre',
                         rankDir: 'LR',
-                        nodeSep: 30,
-                        rankSep: 200,
+                        nodeSep: 80,
+                        rankSep: 250,
+                        ranker: 'network-simplex',
                         padding: 50,
                         align: 'UL'
                     }}

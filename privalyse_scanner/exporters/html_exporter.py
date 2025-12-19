@@ -566,12 +566,13 @@ class HTMLExporter:
             fpath = finding.get('file') or finding.get('file_path')
             rule = finding.get('rule', '')
             
-            # Mark file as critical
-            if severity in ['critical', 'high']:
-                if fpath:
-                    owner_id = f"file_{fpath}"
-                    if owner_id in owner_nodes:
-                        owner_nodes[owner_id]['is_critical'] = True
+            # Mark file as critical ONLY if it's a sink or has very high severity
+            # We relax this: Files are structural, only Sinks should be red.
+            # if severity in ['critical', 'high']:
+            #     if fpath:
+            #         owner_id = f"file_{fpath}"
+            #         if owner_id in owner_nodes:
+            #             owner_nodes[owner_id]['is_critical'] = True
             
             # Infer Sink from Finding
             inferred_sink_label = None
@@ -592,6 +593,9 @@ class HTMLExporter:
             elif 'HARDCODED_SECRET' in rule:
                 # For secrets, the sink is the code itself, but let's visualize it as a "Leak"
                 inferred_sink_label = "Source Code (Leak)"
+            elif 'FORM_FIELD_' in rule:
+                # Form fields are inputs, not sinks. Don't create a sink node for them.
+                inferred_sink_label = None
             
             if inferred_sink_label and fpath:
                 sink_id = f"sink_inferred_{inferred_sink_label.replace(' ', '_')}"
@@ -822,11 +826,11 @@ class HTMLExporter:
                             selector: 'edge',
                             style: {{
                                 'width': 2,
-                                'line-color': '#94a3b8',
-                                'target-arrow-color': '#94a3b8',
+                                'line-color': '#cbd5e1',
+                                'target-arrow-color': '#cbd5e1',
                                 'target-arrow-shape': 'triangle',
                                 'curve-style': 'bezier',
-                                'arrow-scale': 1.5
+                                'arrow-scale': 1.2
                             }}
                         }},
                         {{
@@ -849,9 +853,9 @@ class HTMLExporter:
                     ],
                     layout: {{
                         name: 'dagre',
-                        rankDir: 'TB',
-                        nodeSep: 50,
-                        rankSep: 150,
+                        rankDir: 'LR',
+                        nodeSep: 30,
+                        rankSep: 200,
                         padding: 50,
                         align: 'UL'
                     }}
@@ -900,24 +904,35 @@ class HTMLExporter:
         line = finding.get('line', 0)
         flow_path = finding.get('flow_path', [])
         
+        # Clean up flow path
+        cleaned_flow = []
+        for step in flow_path:
+            s = str(step).replace('"', "'")
+            # Skip "Unknown Source" if it's the first step
+            if s == "Unknown Source" and not cleaned_flow:
+                continue
+            cleaned_flow.append(s)
+            
+        if not cleaned_flow:
+            cleaned_flow = ["Implicit Input", "Sink"]
+        
         # Generate Mermaid Diagram
         mermaid_code = "graph LR\n"
         mermaid_code += "  classDef source fill:#e0f2fe,stroke:#0ea5e9,stroke-width:2px;\n"
         mermaid_code += "  classDef step fill:#f8fafc,stroke:#94a3b8,stroke-width:1px;\n"
         mermaid_code += "  classDef sink fill:#fee2e2,stroke:#ef4444,stroke-width:2px;\n"
         
-        for i, step in enumerate(flow_path):
+        for i, label in enumerate(cleaned_flow):
             node_id = f"f{index}_s{i}"
-            label = str(step).replace('"', "'")
             
             if i == 0:
                 mermaid_code += f'  {node_id}(("{label}")):::source\n'
-            elif i == len(flow_path) - 1:
+            elif i == len(cleaned_flow) - 1:
                 mermaid_code += f'  {node_id}{{{"{label}"}}}:::sink\n'
             else:
                 mermaid_code += f'  {node_id}["{label}"]:::step\n'
                 
-        for i in range(len(flow_path) - 1):
+        for i in range(len(cleaned_flow) - 1):
             mermaid_code += f"  f{index}_s{i} --> f{index}_s{i+1}\n"
             
         return f"""
@@ -941,7 +956,7 @@ class HTMLExporter:
         """
 
     def _generate_findings_section(self, findings: List[Dict], grouped: Dict) -> str:
-        """Generate findings list section"""
+        """Generate findings list section with aggregation"""
         html = '<div class="findings-section">\n'
         html += '    <h2 class="section-title">🔍 Detailed Findings</h2>\n'
         
@@ -953,10 +968,35 @@ class HTMLExporter:
             if not items:
                 continue
             
-            html += f'    <div class="severity-group">\n'
-            html += f'        <div class="severity-header">{self.severity_labels[severity]} ({len(items)})</div>\n'
+            # Aggregate findings by (file, line, rule)
+            aggregated = {}
+            for f in items:
+                key = (f.get('file'), f.get('line'), f.get('rule'))
+                if key not in aggregated:
+                    aggregated[key] = {
+                        'base': f,
+                        'pii_types': set(),
+                        'count': 0
+                    }
+                aggregated[key]['count'] += 1
+                # Extract PII type from classification or rule
+                cls = f.get('classification', {})
+                if cls and cls.get('pii_types'):
+                    aggregated[key]['pii_types'].update(cls.get('pii_types'))
             
-            for i, finding in enumerate(items, 1):
+            html += f'    <div class="severity-group">\n'
+            html += f'        <div class="severity-header">{self.severity_labels[severity]} ({len(aggregated)})</div>\n'
+            
+            for i, (key, data) in enumerate(aggregated.items(), 1):
+                finding = data['base']
+                pii_types = list(data['pii_types'])
+                count = data['count']
+                
+                # Update finding with aggregated info for display
+                if count > 1:
+                    finding['aggregated_count'] = count
+                    finding['aggregated_pii'] = pii_types
+                
                 html += self._generate_finding_card(finding, i, severity)
             
             html += '    </div>\n'
@@ -974,10 +1014,20 @@ class HTMLExporter:
         article = classification.get('article', 'N/A')
         reasoning = classification.get('reasoning', '')
         
+        # Handle aggregated info
+        count = finding.get('aggregated_count', 1)
+        pii_list = finding.get('aggregated_pii', [])
+        
+        title_suffix = ""
+        if count > 1:
+            title_suffix = f" (x{count} occurrences)"
+            if pii_list:
+                reasoning += f"<br><strong>Aggregated PII Types:</strong> {', '.join(pii_list)}"
+        
         return f"""
         <div class="finding-card {severity}">
             <div class="finding-title">
-                {index}. {rule.replace('_', ' ').title()}
+                {index}. {self._prettify_rule(rule)}{title_suffix}
             </div>
             <div class="finding-meta">
                 <span>📍 <strong>File:</strong> {file_path}</span>

@@ -385,43 +385,46 @@ class JavaScriptAnalyzer(BaseAnalyzer):
                 
         # If it looks like the main server file (app.listen or const app = express())
         if "app.listen" in code or "const app = express()" in code:
-            if not has_helmet:
-                findings.append(Finding(
-                    rule="INFRA_EXPRESS_HELMET_MISSING",
-                    severity="medium",
-                    file=str(file_path),
-                    line=1, # General file finding
-                    snippet="const app = express();",
-                    classification=ClassificationResult(
-                        pii_types=[],
-                        category="security_misconfiguration",
-                        severity="medium",
-                        confidence=0.9,
-                        reasoning="Express application missing Helmet middleware (Security Headers)",
-                        sectors=[],
-                        article="Art. 32",
-                        legal_basis_required=True
-                    )
-                ))
+            pass
+            # REMOVED: INFRA_EXPRESS_HELMET_MISSING - Focus on PII protection only
+            # if not has_helmet:
+            #     findings.append(Finding(
+            #         rule="INFRA_EXPRESS_HELMET_MISSING",
+            #         severity="medium",
+            #         file=str(file_path),
+            #         line=1, # General file finding
+            #         snippet="const app = express();",
+            #         classification=ClassificationResult(
+            #             pii_types=[],
+            #             category="security_misconfiguration",
+            #             severity="medium",
+            #             confidence=0.9,
+            #             reasoning="Express application missing Helmet middleware (Security Headers)",
+            #             sectors=[],
+            #             article="Art. 32",
+            #             legal_basis_required=True
+            #         )
+            #     ))
             
-            if not has_disable_x_powered_by and not has_helmet: # Helmet usually handles this, but good to check explicitly if helmet missing
-                findings.append(Finding(
-                    rule="INFRA_EXPRESS_FINGERPRINT",
-                    severity="low",
-                    file=str(file_path),
-                    line=1,
-                    snippet="const app = express();",
-                    classification=ClassificationResult(
-                        pii_types=[],
-                        category="security_misconfiguration",
-                        severity="low",
-                        confidence=0.9,
-                        reasoning="Server fingerprinting enabled (X-Powered-By header not disabled)",
-                        sectors=[],
-                        article="Art. 32",
-                        legal_basis_required=True
-                    )
-                ))
+            # REMOVED: INFRA_EXPRESS_FINGERPRINT - Focus on PII protection only
+            # if not has_disable_x_powered_by and not has_helmet: 
+            #     findings.append(Finding(
+            #         rule="INFRA_EXPRESS_FINGERPRINT",
+            #         severity="low",
+            #         file=str(file_path),
+            #         line=1,
+            #         snippet="const app = express();",
+            #         classification=ClassificationResult(
+            #             pii_types=[],
+            #             category="security_misconfiguration",
+            #             severity="low",
+            #             confidence=0.9,
+            #             reasoning="Server fingerprinting enabled (X-Powered-By header not disabled)",
+            #             sectors=[],
+            #             article="Art. 32",
+            #             legal_basis_required=True
+            #         )
+            #     ))
 
         return findings
 

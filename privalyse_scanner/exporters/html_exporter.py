@@ -499,9 +499,10 @@ class HTMLExporter:
             if any(x in p for x in ['cli', 'argparse', 'input', 'stdin']): return 'input'
             
             # External/Services
-            if any(x in p for x in ['api', 'service', 'external', 'thirdparty', 'lib', 'requests']): return 'external'
+            if any(x in p for x in ['external', 'thirdparty', 'lib', 'requests', 'node_modules']): return 'external'
             
             # Processing/Backend (Default)
+            # Includes: services, controllers, models, utils, etc.
             return 'processing'
 
         # 1.1 Identify Owners (Files and Sinks)

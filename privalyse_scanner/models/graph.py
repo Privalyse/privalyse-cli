@@ -96,6 +96,17 @@ class SemanticDataFlowGraph:
         lines.append("}")
         return "\n".join(lines)
 
+    def _match_route(self, url_path: str, route_pattern: str) -> bool:
+        """Match URL path against route pattern (supports :params)"""
+        if url_path == route_pattern: return True
+        if url_path.endswith(route_pattern): return True
+        
+        # Regex match for params
+        import re
+        pattern = re.escape(route_pattern).replace(r'\:', ':')
+        regex = re.sub(r':[a-zA-Z0-9_]+', r'[^/]+', pattern)
+        return bool(re.search(regex + '$', url_path))
+
     def link_network_flows(self):
         """
         Connects network sinks (e.g., axios.post) to network sources (e.g., Flask routes).
@@ -117,13 +128,9 @@ class SemanticDataFlowGraph:
                 route = node.metadata.get('route')
                 if route:
                     network_sources.append((node, route))
-            # JS/Express
-            elif node.type == 'source' and ('req.body' in node.label or 'req.query' in node.label or 'req.params' in node.label):
-                # For Express, we might not have the route directly on the req.body node
-                # But we might have stored it in metadata during analysis
-                route = node.metadata.get('route')
-                if route:
-                    network_sources.append((node, route))
+            # JS/Express - Check for route metadata on ANY node (usually variables derived from request)
+            elif node.metadata.get('route'):
+                 network_sources.append((node, node.metadata.get('route')))
 
         # 3. Match and Link
         for sink_node, sink_url in network_sinks:
@@ -132,10 +139,11 @@ class SemanticDataFlowGraph:
                 # Remove http://domain.com prefix from sink if present
                 clean_sink = sink_url
                 if '://' in clean_sink:
-                    clean_sink = '/' + clean_sink.split('://', 1)[1].split('/', 1)[1] if '/' in clean_sink.split('://', 1)[1] else '/'
+                    parts = sink_url.split('://', 1)[1].split('/', 1)
+                    clean_sink = '/' + parts[1] if len(parts) > 1 else '/'
                 
-                # Simple matching: check if route is in URL or vice versa
-                if clean_sink == source_route or clean_sink.endswith(source_route) or source_route.endswith(clean_sink):
+                # Use robust matching
+                if self._match_route(clean_sink, source_route):
                     # Create a bridge edge
                     self.add_edge(GraphEdge(
                         source_id=sink_node.id,

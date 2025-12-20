@@ -592,13 +592,13 @@ class PrivalyseScanner:
             # Extract metadata from context
             node_metadata = {"context": flow.context}
             if flow.context:
-                if "URL: " in flow.context:
-                    node_metadata['url'] = flow.context.split("URL: ")[1].strip()
-                if "Route: " in flow.context:
-                    import re
-                    route_match = re.search(r"Route: ([^)]+)", flow.context)
-                    if route_match:
-                        node_metadata['route'] = route_match.group(1)
+                # Parse key-value pairs from context (e.g. "URL: /api/users, Route: /users")
+                parts = [p.strip() for p in flow.context.split(',')]
+                for part in parts:
+                    if part.startswith("URL: "):
+                        node_metadata['url'] = part.replace("URL: ", "").strip()
+                    elif part.startswith("Route: "):
+                        node_metadata['route'] = part.replace("Route: ", "").strip()
             
             self.graph.add_node(GraphNode(
                 id=source_id, 

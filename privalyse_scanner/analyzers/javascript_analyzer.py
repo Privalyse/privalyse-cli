@@ -5,7 +5,7 @@ from typing import List, Dict, Any, Optional, Tuple
 from pathlib import Path
 
 from ..models.finding import Finding, ClassificationResult
-from ..models.taint import DataFlowEdge
+from ..models.taint import DataFlowEdge, TaintInfo
 from .base_analyzer import BaseAnalyzer, AnalyzedSymbol, AnalyzedImport
 
 
@@ -15,7 +15,7 @@ class JSTaintTracker:
     Simulates AST-based taint tracking for "Lite" analysis.
     """
     def __init__(self):
-        self.tainted_vars: Dict[str, Dict[str, Any]] = {} # name -> {pii_types: [], source: str}
+        self.tainted_vars: Dict[str, TaintInfo] = {} # name -> TaintInfo
         self.data_flow_edges: List[DataFlowEdge] = []
 
     def mark_tainted(self, name: str, pii_types: List[str], source: str, context: Optional[str] = None):
@@ -24,12 +24,19 @@ class JSTaintTracker:
             return
             
         if name not in self.tainted_vars:
-            self.tainted_vars[name] = {'pii_types': [], 'source': source}
-        
-        # Add new PII types
-        current_types = set(self.tainted_vars[name]['pii_types'])
-        current_types.update(pii_types)
-        self.tainted_vars[name]['pii_types'] = list(current_types)
+            self.tainted_vars[name] = TaintInfo(
+                variable_name=name,
+                pii_types=pii_types,
+                source_line=0,
+                source_node="regex_match",
+                taint_source=source,
+                context=context
+            )
+        else:
+            # Add new PII types
+            current_types = set(self.tainted_vars[name].pii_types)
+            current_types.update(pii_types)
+            self.tainted_vars[name].pii_types = list(current_types)
 
     def add_edge(self, source: str, target: str, line: int, flow_type: str, transformation: Optional[str] = None, context: Optional[str] = None):
         """Add a data flow edge."""
@@ -45,11 +52,27 @@ class JSTaintTracker:
 
     def get_taint(self, name: str) -> Optional[Dict[str, Any]]:
         """Get taint info for a variable."""
+        info = self.tainted_vars.get(name)
+        if info:
+            return {
+                'pii_types': info.pii_types,
+                'source': info.taint_source,
+                'route': info.context # We use context to store route for now
+            }
+        return None
+
+    def get_taint_info(self, name: str) -> Optional[TaintInfo]:
+        """Get TaintInfo object for a variable."""
         return self.tainted_vars.get(name)
         
     def is_tainted(self, name: str) -> bool:
         """Check if a variable is tainted."""
         return name in self.tainted_vars
+        
+    def set_route(self, name: str, route: str):
+        """Set the route context for a tainted variable."""
+        if name in self.tainted_vars:
+            self.tainted_vars[name].context = route
 
     def infer_pii_type(self, var_name: str) -> List[str]:
         """Infer PII type from variable name."""
@@ -206,6 +229,7 @@ class JavaScriptAnalyzer(BaseAnalyzer):
     
     def __init__(self):
         self.taint_tracker = None
+        self.cross_file_analyzer = None
     
     def analyze_file(self, file_path: Path, code: str, consts: Dict = None, envmap: Dict = None, **kwargs) -> Tuple[List[Finding], List[Any]]:
         """
@@ -214,12 +238,13 @@ class JavaScriptAnalyzer(BaseAnalyzer):
         """
         findings = []
         data_flows = []
+        module_name = kwargs.get('module_name')
         
         # Initialize taint tracker for this file
         self.taint_tracker = JSTaintTracker()
         
         # 1. Perform Lite Taint Analysis (Assignments & Propagation)
-        taint_findings = self._perform_taint_analysis(file_path, code)
+        taint_findings = self._perform_taint_analysis(file_path, code, module_name=module_name)
         findings.extend(taint_findings)
         
         # 2. Analyze React form fields
@@ -428,7 +453,7 @@ class JavaScriptAnalyzer(BaseAnalyzer):
 
         return findings
 
-    def _perform_taint_analysis(self, file_path: Path, code: str) -> List[Finding]:
+    def _perform_taint_analysis(self, file_path: Path, code: str, module_name: Optional[str] = None) -> List[Finding]:
         """
         Perform 'Lite' taint analysis using regex to track variable assignments and usage.
         Supports multiline sinks and state tracking.
@@ -506,8 +531,7 @@ class JavaScriptAnalyzer(BaseAnalyzer):
                             
                             if route:
                                 # Add metadata to the taint source for graph linking
-                                if var_name in self.taint_tracker.tainted_vars:
-                                    self.taint_tracker.tainted_vars[var_name]['route'] = route
+                                self.taint_tracker.set_route(var_name, route)
 
             # 3. Function Args
             if match := func_arg_pattern.search(line_stripped):
@@ -531,7 +555,54 @@ class JavaScriptAnalyzer(BaseAnalyzer):
                 # Assume DB objects contain PII
                 self.taint_tracker.mark_tainted(lhs_var, ["database_record"], f"Database record from '{match.group(0)}'")
 
-            # 6. Sink Detection (Multiline State Machine)
+            # 6. Function Call Propagation (Cross-File)
+            if self.cross_file_analyzer and module_name:
+                # Regex to find function calls: func(arg1, arg2)
+                call_iter = re.finditer(r"\b([a-zA-Z0-9_$]+)\s*\(([^)]*)\)", line_stripped)
+                
+                for match in call_iter:
+                    func_name = match.group(1)
+                    args_str = match.group(2)
+                    
+                    if func_name in ['function', 'if', 'for', 'while', 'switch', 'catch', 'return', 'await', 'require', 'import', 'console']:
+                        continue
+                        
+                    # Extract args
+                    args = [a.strip() for a in args_str.split(',') if a.strip()]
+                    
+                    # Prepare tainted_args
+                    tainted_args = []
+                    for arg in args:
+                        if self.taint_tracker.is_tainted(arg):
+                            taint_info = self.taint_tracker.get_taint_info(arg)
+                            if taint_info:
+                                tainted_args.append((arg, taint_info))
+                    
+                    # Determine target variable (LHS)
+                    target_var = None
+                    assign_match = assign_pattern.search(line_stripped)
+                    if assign_match:
+                        lhs = assign_match.group(1)
+                        rhs = assign_match.group(2)
+                        if func_name in rhs:
+                            target_var = lhs
+                            
+                    # Call propagate_call
+                    result_taint = self.cross_file_analyzer.propagate_call(
+                        caller_module=module_name,
+                        func_name=func_name,
+                        tainted_args=tainted_args,
+                        caller_taint=self.taint_tracker
+                    )
+                    
+                    if result_taint and target_var:
+                         self.taint_tracker.mark_tainted(
+                             target_var, 
+                             result_taint.pii_types,
+                             f"Result of {func_name}"
+                         )
+
+            # 7. Sink Detection (Multiline State Machine)
             if match := sink_start_pattern.search(line_stripped):
                 current_sink = match.group(1)
                 # Extract URL for network sinks
@@ -832,21 +903,30 @@ class JavaScriptAnalyzer(BaseAnalyzer):
         for i, line in enumerate(lines):
             # Functions
             if match := func_pattern.search(line):
+                name = match.group(1)
+                # Heuristic: Check if function name implies PII return
+                returns_pii = any(x in name.lower() for x in ['getuser', 'getprofile', 'login', 'register', 'fetchdata', 'fetchprofile', 'getaccount'])
+                
                 symbols.append(AnalyzedSymbol(
-                    name=match.group(1),
+                    name=name,
                     type='function',
                     line=i + 1,
                     is_exported='export' in line,
-                    signature=line.strip()
+                    signature=line.strip(),
+                    metadata={'returns_pii': returns_pii}
                 ))
             # Arrow functions
             elif match := arrow_pattern.search(line):
+                name = match.group(1)
+                returns_pii = any(x in name.lower() for x in ['getuser', 'getprofile', 'login', 'register', 'fetchdata', 'fetchprofile', 'getaccount'])
+                
                 symbols.append(AnalyzedSymbol(
-                    name=match.group(1),
+                    name=name,
                     type='function',
                     line=i + 1,
                     is_exported='export' in line,
-                    signature=line.strip()
+                    signature=line.strip(),
+                    metadata={'returns_pii': returns_pii}
                 ))
             # Classes
             elif match := class_pattern.search(line):
@@ -868,22 +948,65 @@ class JavaScriptAnalyzer(BaseAnalyzer):
         imports = []
         lines = code.splitlines()
         
-        # ES6: import { X } from 'y'; import X from 'y';
-        import_pattern = re.compile(r"import\s+(?:\{?[\s\w,]+\}?|\*\s+as\s+\w+)\s+from\s+['\"]([^'\"]+)['\"]")
-        # CommonJS: const X = require('y');
-        require_pattern = re.compile(r"(?:const|let|var)\s+(?:\{?[\s\w,]+\}?|\w+)\s*=\s*require\(['\"]([^'\"]+)['\"]\)")
+        # ES6: import { X, Y } from 'z'; import X from 'z'; import * as X from 'z';
+        # Group 1: { X, Y } (Named)
+        # Group 2: * as X (Namespace)
+        # Group 3: X (Default)
+        # Group 4: Module Path
+        import_pattern = re.compile(r"import\s+(?:(\{[\s\w,]+\})|(\*\s+as\s+\w+)|([\w]+))\s+from\s+['\"]([^'\"]+)['\"]")
+        
+        # CommonJS: const X = require('y'); const { X } = require('y');
+        require_pattern = re.compile(r"(?:const|let|var)\s+(?:(\{[\s\w,]+\})|(\w+))\s*=\s*require\(['\"]([^'\"]+)['\"]\)")
         
         for i, line in enumerate(lines):
             if match := import_pattern.search(line):
+                named_group = match.group(1)
+                namespace_group = match.group(2)
+                default_group = match.group(3)
+                module_path = match.group(4)
+                
+                imported_names = []
+                if named_group:
+                    # Parse { A, B as C }
+                    content = named_group.strip('{}')
+                    parts = [p.strip() for p in content.split(',')]
+                    for part in parts:
+                        if ' as ' in part:
+                            imported_names.append(part.split(' as ')[1].strip())
+                        else:
+                            imported_names.append(part)
+                elif namespace_group:
+                    # * as X -> treat as importing X
+                    imported_names.append(namespace_group.split(' as ')[1].strip())
+                elif default_group:
+                    imported_names.append(default_group)
+                
                 imports.append(AnalyzedImport(
-                    source_module=match.group(1),
-                    imported_names=[], # Parsing names is complex with regex, keeping simple for now
+                    source_module=module_path,
+                    imported_names=imported_names,
                     line=i + 1
                 ))
+                
             elif match := require_pattern.search(line):
+                destruct_group = match.group(1)
+                var_group = match.group(2)
+                module_path = match.group(3)
+                
+                imported_names = []
+                if destruct_group:
+                    content = destruct_group.strip('{}')
+                    parts = [p.strip() for p in content.split(',')]
+                    for part in parts:
+                        if ':' in part: # const { a: b } = require...
+                            imported_names.append(part.split(':')[1].strip())
+                        else:
+                            imported_names.append(part)
+                elif var_group:
+                    imported_names.append(var_group)
+                    
                 imports.append(AnalyzedImport(
-                    source_module=match.group(1),
-                    imported_names=[],
+                    source_module=module_path,
+                    imported_names=imported_names,
                     line=i + 1
                 ))
                 

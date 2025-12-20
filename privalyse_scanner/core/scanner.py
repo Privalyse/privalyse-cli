@@ -160,6 +160,7 @@ class PrivalyseScanner:
         
         # Connect cross-file analyzer to python analyzer
         self.python_analyzer.cross_file_analyzer = self.cross_file_analyzer
+        self.javascript_analyzer.cross_file_analyzer = self.cross_file_analyzer
         
         # Track module contexts for cross-file analysis
         module_taint_trackers = {}  # module_name -> TaintTracker
@@ -199,23 +200,24 @@ class PrivalyseScanner:
                     # Pass taint tracker for data flow context
                     taint_tracker = getattr(self.python_analyzer, 'taint_tracker', None)
                     
-                    logger.debug(f"  Running injection analyzer...")
-                    injection_findings = self.injection_analyzer.analyze_file(file_path, code, taint_tracker)
-                    logger.debug(f"  Injection: {len(injection_findings)} findings")
+                    if self.injection_analyzer:
+                        logger.debug(f"  Running injection analyzer...")
+                        injection_findings = self.injection_analyzer.analyze_file(file_path, code, taint_tracker)
+                        logger.debug(f"  Injection: {len(injection_findings)} findings")
+                        findings.extend(injection_findings)
                     
-                    logger.debug(f"  Running crypto analyzer...")
-                    crypto_findings = self.crypto_analyzer.analyze_file(file_path, code)
-                    logger.debug(f"  Crypto: {len(crypto_findings)} findings")
+                    if self.crypto_analyzer:
+                        logger.debug(f"  Running crypto analyzer...")
+                        crypto_findings = self.crypto_analyzer.analyze_file(file_path, code)
+                        logger.debug(f"  Crypto: {len(crypto_findings)} findings")
+                        findings.extend(crypto_findings)
                     
-                    logger.debug(f"  Running security analyzer (cookies, headers)...")
-                    security_findings = self.security_analyzer.analyze_file(file_path, code)
-                    logger.debug(f"  Security: {len(security_findings)} findings")
+                    if self.security_analyzer:
+                        logger.debug(f"  Running security analyzer (cookies, headers)...")
+                        security_findings = self.security_analyzer.analyze_file(file_path, code)
+                        logger.debug(f"  Security: {len(security_findings)} findings")
+                        findings.extend(security_findings)
 
-                    # Merge security findings
-                    findings.extend(injection_findings)
-                    findings.extend(crypto_findings)
-                    findings.extend(security_findings)
-                    
                     logger.debug(f"  Total after security analyzers: {len(findings)} findings")
                     
                     # Register module context for cross-file analysis
@@ -235,8 +237,12 @@ class PrivalyseScanner:
                 elif file_path.suffix in {'.js', '.jsx', '.ts', '.tsx'}:
                     # Analyze JavaScript/TypeScript files
                     logger.info(f"Analyzing JavaScript/TypeScript file: {file_path.name}")
+                    
+                    # Calculate module name for JS
+                    module_name = self.import_resolver._path_to_package_name(file_path)
+                    
                     findings, flows = self.javascript_analyzer.analyze_file(
-                        file_path, code, consts, envmap
+                        file_path, code, consts, envmap, module_name=module_name
                     )
                     
                     # ===== POPULATE GRAPH =====
@@ -246,8 +252,17 @@ class PrivalyseScanner:
                         logger.info(f"  → {len(findings)} findings in {file_path.name}")
                     
                     # Store JavaScript findings separately (they don't have module context for cross-file analysis)
-                    module_name = f"js:{file_path.name}"
+                    # module_name is already set by import_resolver.register_module above
                     module_findings[module_name] = findings
+                    
+                    # Register module context for cross-file analysis (JS support)
+                    if hasattr(self.javascript_analyzer, 'taint_tracker') and self.javascript_analyzer.taint_tracker:
+                        self.cross_file_analyzer.register_module_context(
+                            module_name, 
+                            file_path, 
+                            self.javascript_analyzer.taint_tracker
+                        )
+                        module_taint_trackers[module_name] = self.javascript_analyzer.taint_tracker
                     all_findings.extend(findings)
                     all_flows.extend(flows)
 

@@ -47,6 +47,7 @@ class FunctionSignature:
     is_async: bool = False
     decorators: List[str] = field(default_factory=list)
     docstring: Optional[str] = None
+    returns_pii: bool = False # True if function is known to return PII
     
     # Taint tracking metadata
     pii_parameters: Set[str] = field(default_factory=set)  # Parameters that are PII
@@ -139,7 +140,17 @@ class GlobalSymbolTable:
                     # If it's a function, register signature (simplified for now)
                     if symbol_type == SymbolType.FUNCTION:
                         sig = FunctionSignature(name=sym.name)
+                        
+                        # Check metadata for PII return
+                        if hasattr(sym, 'metadata') and sym.metadata.get('returns_pii'):
+                            sig.returns_pii = True
+                            self.sensitive_functions.add(f"{module_name}.{sym.name}")
+                            
                         info.function_signature = sig
+                        
+                        # Check metadata for PII return
+                        if hasattr(sym, 'metadata') and sym.metadata.get('returns_pii'):
+                            self.sensitive_functions.add(f"{module_name}.{sym.name}")
                 
                 self.module_symbols[module_name] = module_syms
                 return

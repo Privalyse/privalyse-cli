@@ -97,6 +97,66 @@ class CrossFileAnalyzer:
                     self.global_taints[qualified_name] = set()
                 self.global_taints[qualified_name].add(taint_info)
     
+    def propagate_call(
+        self,
+        caller_module: str,
+        func_name: str,
+        tainted_args: List[Tuple[str, TaintInfo]],
+        caller_taint: TaintTracker,
+        object_name: Optional[str] = None
+    ) -> Optional[TaintInfo]:
+        """
+        Generic method to propagate taint for a function call (Language Agnostic).
+        
+        Args:
+            caller_module: Module making the call
+            func_name: Name of function being called
+            tainted_args: List of (arg_name, TaintInfo) for tainted arguments
+            caller_taint: Taint tracker for calling module
+            object_name: Optional object/module name (e.g. 'api' in 'api.getUser')
+        """
+        target_module = caller_module
+        
+        # Resolve target module
+        if object_name:
+            # Check if object is an imported module
+            resolved = self.import_resolver.resolve_symbol(object_name, caller_module)
+            if resolved:
+                target_module = resolved
+        else:
+            # Check if function is imported
+            resolved = self.import_resolver.resolve_symbol(func_name, caller_module)
+            if resolved:
+                target_module = resolved
+                
+        # Get function signature
+        func_sig = self.symbol_table.get_function_signature(func_name, target_module)
+        if not func_sig:
+            # Fallback: Check if it's a known sensitive function even without signature
+            if self._is_known_sensitive(func_name):
+                return TaintInfo(
+                    variable_name=f"{func_name}_result",
+                    pii_types=['unknown'],
+                    source_line=0,
+                    source_node="function_call",
+                    taint_source=f"{target_module}.{func_name}",
+                    confidence=0.6
+                )
+            return None
+            
+        return self._propagate_taint_through_function(
+            func_name=func_name,
+            func_sig=func_sig,
+            tainted_args=tainted_args,
+            caller_module=caller_module,
+            target_module=target_module
+        )
+
+    def _is_known_sensitive(self, func_name: str) -> bool:
+        """Check if function name suggests sensitivity (heuristic fallback)."""
+        sensitive = {'getUser', 'getProfile', 'login', 'register', 'fetchData', 'query'}
+        return func_name in sensitive or 'user' in func_name.lower()
+
     def propagate_function_call_taint(
         self, 
         call_node: ast.Call,
@@ -104,65 +164,36 @@ class CrossFileAnalyzer:
         caller_taint: TaintTracker
     ) -> Optional[TaintInfo]:
         """
-        Propagate taint when calling a function that might be in another module.
-        
-        This is the CORE method for cross-file taint tracking.
-        
-        Args:
-            call_node: AST node for function call
-            caller_module: Module making the call
-            caller_taint: Taint tracker for calling module
-            
-        Returns:
-            TaintInfo if call returns tainted data, None otherwise
+        Propagate taint when calling a function (Python AST specific wrapper).
         """
-        # Extract function name
+        # Extract function name and object
         func_name = None
-        target_module = caller_module  # Default to same module
+        obj_name = None
         
         if isinstance(call_node.func, ast.Name):
-            # Direct call: func()
             func_name = call_node.func.id
-            
-            # Check if function is imported
-            resolved_module = self.import_resolver.resolve_symbol(func_name, caller_module)
-            if resolved_module:
-                target_module = resolved_module
-        
         elif isinstance(call_node.func, ast.Attribute):
-            # Method call: obj.method() or module.func()
             if isinstance(call_node.func.value, ast.Name):
                 obj_name = call_node.func.value.id
                 func_name = call_node.func.attr
-                
-                # Check if obj_name is an imported module
-                resolved_module = self.import_resolver.resolve_symbol(obj_name, caller_module)
-                if resolved_module:
-                    target_module = resolved_module
         
         if not func_name:
             return None
-        
-        # Get function signature from symbol table
-        func_sig = self.symbol_table.get_function_signature(func_name, target_module)
-        if not func_sig:
-            return None
-        
-        # Check if any arguments are tainted
+            
+        # Extract tainted args
         tainted_args = []
         for arg in call_node.args:
             if isinstance(arg, ast.Name):
                 arg_taint = caller_taint.get_taint(arg.id)
                 if arg_taint:
                     tainted_args.append((arg.id, arg_taint))
-        
-        # Propagate taint based on function behavior
-        return self._propagate_taint_through_function(
-            func_name=func_name,
-            func_sig=func_sig,
-            tainted_args=tainted_args,
+                    
+        return self.propagate_call(
             caller_module=caller_module,
-            target_module=target_module
+            func_name=func_name,
+            tainted_args=tainted_args,
+            caller_taint=caller_taint,
+            object_name=obj_name
         )
     
     def _propagate_taint_through_function(
@@ -186,9 +217,11 @@ class CrossFileAnalyzer:
             if func_sig.returns_pii:
                 return TaintInfo(
                     variable_name=func_name,
-                    pii_types={'unknown'},
-                    confidence=0.7,
-                    sources={f"{target_module}.{func_name}"}
+                    pii_types=['unknown'],
+                    source_line=0,
+                    source_node="function_call",
+                    taint_source=f"{target_module}.{func_name}",
+                    confidence=0.7
                 )
             return None
         

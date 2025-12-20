@@ -8,7 +8,7 @@ Ensures 1:1 feature parity across languages.
 from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import List, Dict, Any, Tuple, Optional
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from ..models.finding import Finding
 
@@ -20,6 +20,7 @@ class AnalyzedSymbol:
     line: int
     is_exported: bool
     signature: Optional[str] = None
+    metadata: Dict[str, Any] = field(default_factory=dict)
 
 @dataclass
 class AnalyzedImport:

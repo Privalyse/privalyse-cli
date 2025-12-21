@@ -2,7 +2,7 @@
   <img src="Banner.png" alt="Privalyse Logo" width="100%"/>
 </p>
 
-# 🔒 Privalyse – Make Invisible Data Flows Visible
+# 🔒 Privalyse – Catch Privcay Leaks in AI-Assisted Codebases
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![PyPI](https://img.shields.io/pypi/v/privalyse-cli)](https://pypi.org/project/privalyse-cli/)

@@ -305,9 +305,11 @@ class GlobalSymbolTable:
         """Check if parameter/attribute name suggests PII data."""
         pii_indicators = {
             'email', 'password', 'passwd', 'pwd', 'token', 'api_key', 'secret',
-            'ssn', 'social_security', 'credit_card', 'phone', 'address',
-            'user_id', 'username', 'name', 'firstname', 'lastname',
-            'birth_date', 'dob', 'ip_address', 'location', 'geo'
+            'ssn', 'social_security', 'credit_card', 'cc_number', 'card_number', 'cvv',
+            'phone', 'mobile', 'cell', 'address', 'street', 'city', 'zip', 'postal',
+            'user_id', 'username', 'name', 'firstname', 'lastname', 'fullname',
+            'birth_date', 'dob', 'ip_address', 'location', 'geo', 'lat', 'lon',
+            'auth', 'credential', 'session', 'jwt', 'cookie', 'iban', 'bank_account'
         }
         
         name_lower = name.lower()

@@ -913,7 +913,7 @@ class HTMLExporter:
         # Clean up flow path
         cleaned_flow = []
         for step in flow_path:
-            s = str(step).replace('"', "'")
+            s = str(step).replace('"', "'").replace('\n', ' ').replace('\r', '')
             # Skip "Unknown Source" if it's the first step
             if s == "Unknown Source" and not cleaned_flow:
                 continue

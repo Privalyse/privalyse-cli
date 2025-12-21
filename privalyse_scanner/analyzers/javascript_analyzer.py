@@ -18,7 +18,7 @@ class JSTaintTracker:
         self.tainted_vars: Dict[str, TaintInfo] = {} # name -> TaintInfo
         self.data_flow_edges: List[DataFlowEdge] = []
 
-    def mark_tainted(self, name: str, pii_types: List[str], source: str, context: Optional[str] = None):
+    def mark_tainted(self, name: str, pii_types: List[str], source: str, context: Optional[str] = None, is_sanitized: bool = False):
         """Mark a variable as tainted with specific PII types."""
         if not name or not pii_types:
             return
@@ -30,13 +30,17 @@ class JSTaintTracker:
                 source_line=0,
                 source_node="regex_match",
                 taint_source=source,
-                context=context
+                context=context,
+                is_sanitized=is_sanitized
             )
         else:
-            # Add new PII types
+            # Update with new PII types
             current_types = set(self.tainted_vars[name].pii_types)
             current_types.update(pii_types)
             self.tainted_vars[name].pii_types = list(current_types)
+            # If re-tainted with unsanitized data, it becomes unsanitized
+            if not is_sanitized:
+                self.tainted_vars[name].is_sanitized = False
 
     def add_edge(self, source: str, target: str, line: int, flow_type: str, transformation: Optional[str] = None, context: Optional[str] = None):
         """Add a data flow edge."""
@@ -1137,14 +1141,28 @@ class JavaScriptAnalyzer(BaseAnalyzer):
         return findings
     
     def _analyze_api_calls(self, file_path: Path, code: str) -> Tuple[List[Finding], List[Dict[str, Any]]]:
-        """Analyze fetch() and axios calls for data transmission"""
+        """Analyze fetch() and axios calls for data transmission, specifically to AI services."""
         findings = []
         data_flows = []
         lines = code.splitlines()
         
+        # AI/LLM Domains to watch for
+        AI_DOMAINS = [
+            "api.openai.com",
+            "api.anthropic.com",
+            "api.cohere.ai",
+            "api.mistral.ai",
+            "generativelanguage.googleapis.com", # Gemini
+            "bedrock-runtime", # AWS Bedrock
+            "api.replicate.com",
+            "api.groq.com",
+            "huggingface.co"
+        ]
+        
         # Detect fetch() calls
         fetch_pattern = re.compile(r"\bfetch\s*\(\s*['\"]([^'\"]+)['\"]")
-        axios_pattern = re.compile(r"\baxios\.(get|post|put|patch|delete)\s*\(\s*['\"]([^'\"]+)['\"]")
+        # Detect axios calls: axios.post(url, data)
+        axios_pattern = re.compile(r"\baxios\.(get|post|put|patch|delete)\s*\(\s*['\"]([^'\"]+)['\"](?:\s*,\s*([a-zA-Z0-9_$]+))?")
         
         for line_num, line in enumerate(lines, start=1):
             # Check for fetch calls
@@ -1153,7 +1171,29 @@ class JavaScriptAnalyzer(BaseAnalyzer):
                 url = fetch_match.group(1)
                 is_secure = url.startswith("https://")
                 
-                if not is_secure and (url.startswith("http://") or url.startswith("/")):
+                # Check for AI Domain
+                is_ai_sink = any(d in url for d in AI_DOMAINS)
+                
+                if is_ai_sink:
+                    finding = Finding(
+                        rule="AI_PII_LEAK",
+                        severity="critical",
+                        file=str(file_path),
+                        line=line_num,
+                        snippet=line.strip()[:200],
+                        classification=ClassificationResult(
+                            pii_types=["ai_prompt_data"],
+                            category="ai_leakage",
+                            severity="critical",
+                            confidence=0.95,
+                            sectors=["ai_ml"],
+                            article="Art. 35 (DPIA)",
+                            legal_basis_required=True,
+                            reasoning=f"Data transmission to AI Provider detected: {url}. Ensure data is sanitized/anonymized."
+                        )
+                    )
+                    findings.append(finding)
+                elif not is_secure and (url.startswith("http://") or url.startswith("/")):
                     finding = Finding(
                         rule="HTTP_INSECURE_API",
                         severity="high",
@@ -1178,6 +1218,7 @@ class JavaScriptAnalyzer(BaseAnalyzer):
                     "library": "fetch",
                     "url": url,
                     "secure": is_secure,
+                    "is_ai": is_ai_sink,
                     "file": str(file_path),
                     "line": line_num
                 })
@@ -1188,7 +1229,7 @@ class JavaScriptAnalyzer(BaseAnalyzer):
                     target=f"fetch",
                     line=line_num,
                     flow_type="sink",
-                    context=f"URL: {url}"
+                    context=f"URL: {url}" + (", AI_SINK" if is_ai_sink else "")
                 )
             
             # Check for axios calls
@@ -1196,9 +1237,53 @@ class JavaScriptAnalyzer(BaseAnalyzer):
             if axios_match:
                 method = axios_match.group(1).upper()
                 url = axios_match.group(2)
+                data_var = axios_match.group(3) # Optional data variable
                 is_secure = url.startswith("https://")
                 
-                if not is_secure and (url.startswith("http://") or url.startswith("/")):
+                # Check for AI Domain
+                is_ai_sink = any(d in url for d in AI_DOMAINS)
+                
+                if is_ai_sink:
+                    # If we captured the data variable, check if it's sanitized
+                    is_sanitized = False
+                    taint_info = None
+                    if data_var and self.taint_tracker.is_tainted(data_var):
+                        taint_info = self.taint_tracker.get_taint_info(data_var)
+                        # In JS regex analyzer, we don't have deep 'is_sanitized' tracking on the variable object itself easily available
+                        # unless we added it to TaintInfo. 
+                        # But we can check if the variable name implies sanitization
+                        if "clean" in data_var.lower() or "safe" in data_var.lower() or "anon" in data_var.lower():
+                            is_sanitized = True
+                    
+                    severity = "low" if is_sanitized else "critical"
+                    reasoning = f"Data transmission to AI Provider detected: {url}."
+                    if is_sanitized:
+                        reasoning += " Data appears to be sanitized."
+                    elif taint_info:
+                        reasoning += f" Sending TAINTED data: {data_var} ({taint_info.pii_types})."
+                    else:
+                        reasoning += " Ensure data is sanitized."
+
+                    finding = Finding(
+                        rule="AI_PII_LEAK",
+                        severity=severity,
+                        file=str(file_path),
+                        line=line_num,
+                        snippet=line.strip()[:200],
+                        classification=ClassificationResult(
+                            pii_types=["ai_prompt_data"] + (taint_info.pii_types if taint_info else []),
+                            category="ai_leakage",
+                            severity=severity,
+                            confidence=0.95,
+                            sectors=["ai_ml"],
+                            article="Art. 35 (DPIA)",
+                            legal_basis_required=True,
+                            reasoning=reasoning
+                        )
+                    )
+                    findings.append(finding)
+
+                elif not is_secure and (url.startswith("http://") or url.startswith("/")):
                     finding = Finding(
                         rule="HTTP_INSECURE_API",
                         severity="high",
@@ -1221,8 +1306,10 @@ class JavaScriptAnalyzer(BaseAnalyzer):
                 data_flows.append({
                     "type": "network",
                     "library": "axios",
+                    "method": method,
                     "url": url,
                     "secure": is_secure,
+                    "is_ai": is_ai_sink,
                     "file": str(file_path),
                     "line": line_num
                 })
@@ -1233,48 +1320,103 @@ class JavaScriptAnalyzer(BaseAnalyzer):
                     target=f"axios.{method.lower()}",
                     line=line_num,
                     flow_type="sink",
-                    context=f"URL: {url}"
+                    context=f"URL: {url}" + (", AI_SINK" if is_ai_sink else "")
                 )
-                
-                data_flows.append({
-                    "type": "network",
-                    "library": "axios",
-                    "method": method,
-                    "url": url,
-                    "secure": is_secure,
-                    "file": str(file_path),
-                    "line": line_num
-                })
         
         return findings, data_flows
     
     def _analyze_storage_usage(self, file_path: Path, code: str) -> List[Finding]:
-        """Detect localStorage/sessionStorage usage with sensitive data"""
+        """Detect localStorage/sessionStorage/cookie usage with sensitive data"""
         findings = []
         lines = code.splitlines()
         
-        storage_pattern = re.compile(r"\b(localStorage|sessionStorage)\.setItem\s*\(")
-        token_pattern = re.compile(r"(token|jwt|session|auth|password|secret)", re.IGNORECASE)
+        # Patterns
+        storage_pattern = re.compile(r"\b(localStorage|sessionStorage)\.setItem\s*\(([^,]+),([^)]+)\)")
+        cookie_pattern = re.compile(r"document\.cookie\s*=")
+        
+        # Expanded sensitive patterns (tokens + PII)
+        sensitive_pattern = re.compile(r"(token|jwt|session|auth|password|secret|email|phone|ssn|credit|card|address|location|user|profile|data)", re.IGNORECASE)
         
         for line_num, line in enumerate(lines, start=1):
-            if storage_pattern.search(line) and token_pattern.search(line):
-                finding = Finding(
-                    rule="BROWSER_TOKEN_STORAGE",
-                    severity="high",
-                    file=str(file_path),
-                    line=line_num,
-                    snippet=line.strip()[:200],
-                    classification=ClassificationResult(
-                        pii_types=["token"],
-                        category="credentials",
+            line_content = line.strip()
+            
+            # 1. LocalStorage / SessionStorage
+            storage_match = storage_pattern.search(line_content)
+            if storage_match:
+                key_arg = storage_match.group(2).strip().strip("'\"")
+                val_arg = storage_match.group(3).strip()
+                
+                # Check if we are storing something sensitive
+                # Case A: The key name implies sensitivity (e.g. "user_data")
+                is_sensitive_key = sensitive_pattern.search(key_arg)
+                
+                # Case B: The value variable is tainted
+                # Clean up value arg (remove JSON.stringify, etc)
+                clean_val_var = re.sub(r'^JSON\.stringify\(|\)$', '', val_arg).strip()
+                is_tainted_val = self.taint_tracker.is_tainted(clean_val_var) if self.taint_tracker else False
+                
+                # Case C: The value arg name implies sensitivity (e.g. userEmail)
+                is_sensitive_val_name = sensitive_pattern.search(clean_val_var)
+
+                if is_sensitive_key or is_tainted_val or is_sensitive_val_name:
+                    pii_types = []
+                    if is_tainted_val:
+                        pii_types = self.taint_tracker.get_taint_info(clean_val_var).pii_types
+                    elif is_sensitive_key:
+                        pii_types = [key_arg]
+                    else:
+                        pii_types = ["potential_pii"]
+
+                    finding = Finding(
+                        rule="INSECURE_BROWSER_STORAGE",
                         severity="high",
-                        confidence=0.85,
-                        article="Art. 6",
-                        legal_basis_required=True,
-                        sectors=[],
-                        reasoning="Sensitive data in browser storage"
+                        file=str(file_path),
+                        line=line_num,
+                        snippet=line_content[:200],
+                        classification=ClassificationResult(
+                            pii_types=pii_types,
+                            category="data_security",
+                            severity="high",
+                            confidence=0.9 if is_tainted_val else 0.6,
+                            article="Art. 32",
+                            legal_basis_required=True,
+                            sectors=[],
+                            reasoning=f"Sensitive data stored in browser storage (Tainted: {is_tainted_val})"
+                        )
                     )
-                )
-                findings.append(finding)
+                    findings.append(finding)
+                    
+                    # Add Sink Edge
+                    if self.taint_tracker:
+                        self.taint_tracker.add_edge(
+                            source=clean_val_var,
+                            target=f"{storage_match.group(1)}.setItem",
+                            line=line_num,
+                            flow_type="sink",
+                            context="browser_storage"
+                        )
+
+            # 2. Cookies
+            if cookie_pattern.search(line_content):
+                # Check if assigning sensitive data
+                if sensitive_pattern.search(line_content):
+                     finding = Finding(
+                        rule="INSECURE_COOKIE_STORAGE",
+                        severity="medium",
+                        file=str(file_path),
+                        line=line_num,
+                        snippet=line_content[:200],
+                        classification=ClassificationResult(
+                            pii_types=["cookie_data"],
+                            category="data_security",
+                            severity="medium",
+                            confidence=0.6,
+                            article="Art. 5",
+                            legal_basis_required=True,
+                            sectors=[],
+                            reasoning="Sensitive data stored in cookies. Ensure HttpOnly/Secure flags are used."
+                        )
+                    )
+                     findings.append(finding)
         
         return findings

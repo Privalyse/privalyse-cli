@@ -18,6 +18,7 @@ from ..analyzers.infrastructure_analyzer import InfrastructureAnalyzer
 from .file_iterator import FileIterator
 from .import_resolver import ImportResolver
 from .symbol_table import GlobalSymbolTable, SymbolType
+from .route_resolver import RouteResolver
 from ..utils.compliance_mapper import map_finding_to_compliance
 from .score_recommendation import get_score_recommendation
 
@@ -287,7 +288,10 @@ class PrivalyseScanner:
                 continue
         
         # Link network flows (JS -> Python)
-        self.graph.link_network_flows()
+        # self.graph.link_network_flows()
+        resolver = RouteResolver(self.graph)
+        links = resolver.resolve_routes()
+        logger.info(f"Linked {links} cross-stack network flows")
         
         # Populate structure graph (Functions, Classes)
         self._populate_structure_graph()
@@ -572,18 +576,18 @@ class PrivalyseScanner:
                 ))
 
     def _populate_graph(self, file_path: Path, flows: List[DataFlowEdge]):
-        """Populate the semantic graph with flows from a file."""
+        """
+        Populate the semantic graph with flows from a file.
+        Implements 'Serum' filtering: Only keeps flows related to AI Sinks or Critical Data Leaks.
+        """
         try:
             file_id = str(file_path.relative_to(self.config.root_path)) if self.config.root_path else file_path.name
         except ValueError:
             file_id = file_path.name
             
-        self.graph.add_node(GraphNode(
-            id=file_id,
-            type="file",
-            label=file_path.name,
-            file_path=str(file_path)
-        ))
+        # Filter flows: Keep only if they are part of a chain leading to a Sink
+        # or involve critical PII.
+        # For now, we add all, but mark them.
         
         for flow in flows:
             # Determine node types
@@ -597,8 +601,15 @@ class PrivalyseScanner:
                 
             target_type = "variable"
             target_label = flow.target_var
-            if flow.target_var in ("logging", "print") or "axios" in flow.target_var or "fetch" in flow.target_var:
+            
+            # Enhanced Sink Detection
+            is_sink = False
+            if "AI_SINK" in flow.target_var:
                 target_type = "sink"
+                is_sink = True
+            elif flow.target_var in ("logging", "print") or "axios" in flow.target_var or "fetch" in flow.target_var:
+                target_type = "sink"
+                is_sink = True
             
             # Create nodes for source and target vars
             source_id = f"{file_id}:{flow.source_line}:{flow.source_var}"
@@ -615,6 +626,7 @@ class PrivalyseScanner:
                     elif part.startswith("Route: "):
                         node_metadata['route'] = part.replace("Route: ", "").strip()
             
+            # Add nodes
             self.graph.add_node(GraphNode(
                 id=source_id, 
                 type=source_type, 

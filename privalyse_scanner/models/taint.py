@@ -17,6 +17,14 @@ class TaintInfo:
     transformations: List[str] = field(default_factory=list)
     context: Optional[str] = None  # Context where taint was introduced (e.g. function name)
     flow_path: List[str] = field(default_factory=list)  # Sequence of nodes/vars in the flow
+    is_sanitized: bool = False  # True if data has passed through a sanitization function
+    sources: List[str] = field(default_factory=list) # Multiple sources support
+
+    def __post_init__(self):
+        if self.taint_source and not self.sources:
+            self.sources = [self.taint_source]
+        elif self.sources and not self.taint_source:
+            self.taint_source = self.sources[0]
 
 
 @dataclass
@@ -170,8 +178,9 @@ class TaintTracker:
     
     def mark_tainted(self, var_name: str, pii_types: List[str], source_line: int,
                     source_node: str = "unknown", taint_source: Optional[str] = None,
-                    context: Optional[str] = None):
+                    context: Optional[str] = None, is_sanitized: bool = False):
         """Mark a variable as tainted with PII"""
+        print(f"DEBUG: mark_tainted called for {repr(var_name)}")
         if var_name not in self.tainted_vars:
             self.tainted_vars[var_name] = TaintInfo(
                 variable_name=var_name,
@@ -179,7 +188,9 @@ class TaintTracker:
                 source_line=source_line,
                 source_node=source_node,
                 taint_source=taint_source,
-                context=context
+                context=context,
+                is_sanitized=is_sanitized,
+                sources=[taint_source] if taint_source else []
             )
         else:
             # Update with new PII types
@@ -187,6 +198,13 @@ class TaintTracker:
             existing.pii_types = list(set(existing.pii_types + pii_types))
             if existing.context is None and context:
                 existing.context = context
+            # If re-tainted with unsanitized data, it becomes unsanitized
+            if not is_sanitized:
+                existing.is_sanitized = False
+            elif is_sanitized:
+                existing.is_sanitized = True
+        
+        # print(f"DEBUG: Tainted vars: {list(self.tainted_vars.keys())}")
     
     def propagate_through_assignment(self, target: str, source: ast.expr, line: int, context: Optional[str] = None):
         """Propagate taint through assignment: target = source"""
@@ -201,7 +219,8 @@ class TaintTracker:
                     line,
                     "assignment",
                     taint_source=source.id,
-                    context=context
+                    context=context,
+                    is_sanitized=source_taint.is_sanitized
                 )
                 self.data_flow_edges.append(DataFlowEdge(
                     source_var=source.id,

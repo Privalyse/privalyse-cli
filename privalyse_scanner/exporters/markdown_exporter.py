@@ -42,25 +42,18 @@ class MarkdownExporter:
         # Executive Summary
         sections.append(self._generate_summary(scan_result))
         
-        # Critical Issues (Top Priority!)
-        sections.append(self._generate_critical_section(scan_result))
+        # AI Data Exposure (Top Priority!)
+        sections.append(self._generate_ai_exposure_section(scan_result))
         
-        # Top Data Flow Stories (New!)
+        # Top Data Flow Stories
         sections.append(self._generate_top_flows_section(scan_result))
         
-        # Findings by Severity
+        # Findings by Severity (Filtered)
         sections.append(self._generate_findings_by_severity(scan_result))
         
-        # Data Flow Analysis (if available)
-        if scan_result.get('flows'):
-            sections.append(self._generate_dataflow_section(scan_result))
-            
         # Visual Data Flow Graph (Mermaid)
         if scan_result.get('semantic_graph'):
             sections.append(self._generate_mermaid_graph(scan_result))
-        
-        # GDPR Compliance
-        sections.append(self._generate_compliance_section(scan_result))
         
         # Statistics
         sections.append(self._generate_statistics(scan_result))
@@ -70,12 +63,35 @@ class MarkdownExporter:
         
         return '\n\n'.join(sections)
     
+    def _generate_ai_exposure_section(self, scan_result: Dict[str, Any]) -> str:
+        """Generate AI Data Exposure section - The Core Value Prop"""
+        findings = scan_result.get('findings', [])
+        ai_leaks = [f for f in findings if f.get('rule') == 'AI_PII_LEAK']
+        
+        if not ai_leaks:
+            return """## 🤖 AI Data Exposure
+
+**✅ No AI Data Leaks Detected.** 
+Your application does not appear to be sending sensitive data to known AI providers (OpenAI, Anthropic, etc.) without sanitization.
+"""
+        
+        section = [f"""## 🤖 AI Data Exposure - CRITICAL
+
+Found **{len(ai_leaks)}** instances where data is being sent to AI models/APIs. 
+These are your highest priority privacy risks.
+"""]
+        
+        for i, finding in enumerate(ai_leaks, 1):
+            section.append(self._format_finding_detailed(finding, i))
+            
+        return '\n'.join(section)
+
     def _generate_top_flows_section(self, scan_result: Dict[str, Any]) -> str:
         """Generate section for top data flow stories"""
         findings = scan_result.get('findings', [])
         
-        # Filter for findings with flow paths
-        flow_findings = [f for f in findings if f.get('flow_path') and len(f.get('flow_path')) > 1]
+        # Filter for findings with flow paths, excluding AI leaks (already shown)
+        flow_findings = [f for f in findings if f.get('flow_path') and len(f.get('flow_path')) > 1 and f.get('rule') != 'AI_PII_LEAK']
         
         # Sort by severity (Critical > High > Medium)
         severity_order = {'critical': 0, 'high': 1, 'medium': 2, 'low': 3, 'info': 4}
@@ -84,9 +100,9 @@ class MarkdownExporter:
         if not flow_findings:
             return ""
             
-        section = ["""## 🌊 Top Data Flow Stories
+        section = ["""## 🌊 Other Critical Data Flows
 
-These findings show the complete path of sensitive data from source to sink.
+These findings show the complete path of sensitive data from source to sink (Database, Logs, etc.).
 """]
         
         # Show top 5 flows
@@ -104,11 +120,11 @@ These findings show the complete path of sensitive data from source to sink.
         timestamp = metadata.get('scan_timestamp', datetime.now().isoformat())
         root_path = metadata.get('root_path', 'Unknown')
         
-        return f"""# 🔒 Privalyse Security Scan Report
+        return f"""# 🛡️ Privalyse: AI Privacy Guardian
 
 **Generated:** {timestamp}  
-**Folder:** `{root_path}`  
-**Scanner Version:** v0.1"""
+**Target:** `{root_path}`  
+**Focus:** AI Data Leakage & PII Protection"""
     
     def _generate_summary(self, scan_result: Dict[str, Any]) -> str:
         """Generate executive summary"""
@@ -123,24 +139,23 @@ These findings show the complete path of sensitive data from source to sink.
             'info': 0
         }
         
+        ai_leak_count = 0
+        
         for finding in findings:
             severity = finding.get('severity', 'info')
             severity_counts[severity] = severity_counts.get(severity, 0) + 1
-        
-        compliance_score = scan_result.get('compliance_score', 0)
+            if finding.get('rule') == 'AI_PII_LEAK':
+                ai_leak_count += 1
         
         # Status emoji
-        if severity_counts['critical'] > 0:
-            status = '🚨 **ACTION REQUIRED**'
+        if ai_leak_count > 0:
+            status = '🚨 **AI DATA LEAK DETECTED**'
             status_color = 'red'
-        elif severity_counts['high'] > 0:
-            status = '⚠️ **NEEDS ATTENTION**'
+        elif severity_counts['critical'] > 0:
+            status = '⚠️ **CRITICAL PRIVACY RISKS**'
             status_color = 'orange'
-        elif severity_counts['medium'] > 0:
-            status = '📋 **REVIEW RECOMMENDED**'
-            status_color = 'yellow'
         else:
-            status = '✅ **LOOKING GOOD**'
+            status = '✅ **AI SAFE**'
             status_color = 'green'
         
         summary = f"""## 📊 Executive Summary
@@ -149,41 +164,16 @@ These findings show the complete path of sensitive data from source to sink.
 
 | Metric | Value |
 |--------|-------|
+| **AI Data Leaks** | {self.severity_emoji['critical'] if ai_leak_count > 0 else '✅'} {ai_leak_count} |
 | **Total Findings** | {len(findings)} |
 | **Critical** | {self.severity_emoji['critical']} {severity_counts['critical']} |
 | **High** | {self.severity_emoji['high']} {severity_counts['high']} |
-| **Medium** | {self.severity_emoji['medium']} {severity_counts['medium']} |
-| **Low** | {self.severity_emoji['low']} {severity_counts['low']} |
-| **Info** | {self.severity_emoji['info']} {severity_counts['info']} |"""
-        
-        if compliance_score > 0:
-            summary += f"\n| **Compliance Score** | {compliance_score}/100 |"
-        
+"""
         return summary
     
     def _generate_critical_section(self, scan_result: Dict[str, Any]) -> str:
-        """Generate critical issues section - most important!"""
-        findings = scan_result.get('findings', [])
-        critical = [f for f in findings if f.get('severity') == 'critical']
-        
-        if not critical:
-            return """## 🎉 Critical Issues
-
-**No critical issues found!** Great job!"""
-        
-        section = [f"""## 🚨 CRITICAL ISSUES - FIX IMMEDIATELY
-
-Found **{len(critical)}** critical privacy/security issues that need immediate attention:
-"""]
-        
-        # Show top 5 critical (don't overwhelm)
-        for i, finding in enumerate(critical[:5], 1):
-            section.append(self._format_finding_detailed(finding, i))
-        
-        if len(critical) > 5:
-            section.append(f"\n*... and {len(critical) - 5} more critical issues. See full findings below.*\n")
-        
-        return '\n'.join(section)
+        # Deprecated, replaced by _generate_ai_exposure_section
+        return ""
     
     def _format_finding_detailed(self, finding: Dict[str, Any], number: int = None) -> str:
         """Format a single finding with full details"""
@@ -263,7 +253,7 @@ Found **{len(critical)}** critical privacy/security issues that need immediate a
         
         # Nodes
         for i, step in enumerate(flow_path):
-            label = str(step).replace('"', "'")
+            label = str(step).replace('"', "'").replace('\n', ' ').replace('\r', '')
             
             # Skip "Unknown Source" if it's the first step
             if i == 0 and label == "Unknown Source":
@@ -282,7 +272,8 @@ Found **{len(critical)}** critical privacy/security issues that need immediate a
                 css_class = "step"
                 shape_open, shape_close = "[", "]"
                 
-            lines.append(f'  {node_id}{shape_open}"{label}"{shape_close}::: {css_class}')
+            lines.append(f'  {node_id}{shape_open}"{label}"{shape_close}')
+            lines.append(f'  class {node_id} {css_class}')
             
         # Edges
         # We need to track valid nodes to connect them correctly
@@ -417,13 +408,27 @@ user.password = bcrypt.hashpw(password.encode(), bcrypt.gensalt())
             return f"""This {severity} severity finding indicates a privacy/security concern that should be addressed to maintain GDPR compliance and protect user data."""
     
     def _generate_findings_by_severity(self, scan_result: Dict[str, Any]) -> str:
-        """Generate findings organized by severity"""
+        """Generate findings organized by severity, filtering out generic security noise"""
         findings = scan_result.get('findings', [])
+        
+        # Filter out "BS" findings as requested
+        ignored_rules = [
+            'INFRA_EXPRESS_HELMET_MISSING',
+            'INFRA_EXPRESS_FINGERPRINT',
+            'HTTP_INSECURE_API', # Unless it's AI related, which is handled separately
+            'TRACKING_GOOGLE_ANALYTICS', # Lower priority
+            'TRACKING_FACEBOOK_PIXEL',
+            'TRACKING_MIXPANEL',
+            'TRACKING_HOTJAR',
+            'TRACKING_SEGMENT'
+        ]
+        
+        filtered_findings = [f for f in findings if f.get('rule') not in ignored_rules]
         
         section = ["## 📋 All Findings by Severity\n"]
         
         for severity in ['high', 'medium', 'low', 'info']:
-            severity_findings = [f for f in findings if f.get('severity') == severity]
+            severity_findings = [f for f in filtered_findings if f.get('severity') == severity]
             
             if not severity_findings:
                 continue
@@ -544,7 +549,14 @@ Critical data paths detected in your application:
         layer_sinks = {}     # 🚨 Sinks (Database, Logs, APIs) - deduplicated
         
         def make_id(node):
-            return node['id'].replace(':', '_').replace('.', '_').replace('/', '_').replace('-', '_')
+            # Sanitize ID to be a valid Mermaid identifier
+            # Replace all non-alphanumeric characters with underscores
+            import re
+            clean_id = re.sub(r'[^a-zA-Z0-9_]', '_', node['id'])
+            # Ensure it doesn't start with a number
+            if clean_id and clean_id[0].isdigit():
+                clean_id = '_' + clean_id
+            return clean_id
         
         for node in nodes:
             ntype = node.get('type', 'variable')
@@ -583,13 +595,18 @@ Critical data paths detected in your application:
         
         # Generate Layers (Left to Right)
         
+        # Helper to sanitize labels
+        def sanitize_label(label):
+            # Escape quotes and brackets, remove newlines
+            return label.replace('"', "'").replace('[', '(').replace(']', ')').replace('\n', ' ').replace('\r', '')
+
         # Layer 1: Frontend (Input Collection)
         if layer_frontend:
             lines.append('  subgraph L1["📱 FRONTEND<br/>User Input & Forms"]')
             lines.append('    direction TB')
             for node in layer_frontend:
                 nid = make_id(node)
-                label = node.get('label', '').replace('"', "'")
+                label = sanitize_label(node.get('label', ''))
                 ntype = node.get('type', '')
                 if ntype == 'function':
                     lines.append(f'    {nid}["{label}"]:::frontend')
@@ -604,7 +621,7 @@ Critical data paths detected in your application:
             lines.append('    direction TB')
             for node in layer_backend:
                 nid = make_id(node)
-                label = node.get('label', '').replace('"', "'")
+                label = sanitize_label(node.get('label', ''))
                 lines.append(f'    {nid}["{label}"]:::backend')
             lines.append('  end')
             lines.append('')
@@ -615,7 +632,7 @@ Critical data paths detected in your application:
             lines.append('    direction TB')
             for node in layer_storage:
                 nid = make_id(node)
-                label = node.get('label', '').replace('"', "'")
+                label = sanitize_label(node.get('label', ''))
                 is_pii = any(kw in label.lower() for kw in pii_keywords)
                 if is_pii:
                     lines.append(f'    {nid}("{label}"):::piiVar')
@@ -630,7 +647,7 @@ Critical data paths detected in your application:
             lines.append('    direction TB')
             for label, node in layer_sinks.items():
                 nid = make_id(node)
-                safe_label = label.replace('"', "'")
+                safe_label = sanitize_label(label)
                 
                 # Determine severity-based style
                 severity = sink_severity_map.get(node['id'], 'low')

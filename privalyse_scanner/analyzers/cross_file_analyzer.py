@@ -245,9 +245,11 @@ class CrossFileAnalyzer:
         # Create propagated taint
         return TaintInfo(
             variable_name=f"{func_name}_result",
-            pii_types=merged_pii_types,
+            pii_types=list(merged_pii_types),
+            source_line=0,
+            source_node="cross_file_call",
             confidence=max_confidence,
-            sources=merged_sources
+            sources=list(merged_sources)
         )
     
     def propagate_taint_across_all_modules(self) -> Dict[str, List[Finding]]:

@@ -58,6 +58,23 @@ def is_likely_secret(var_name: str, value: str) -> Tuple[Optional[str], float]:
     return None, 0.0
 
 
+# AI/LLM Sink Patterns
+AI_SINKS = {
+    'openai': ['Completion.create', 'ChatCompletion.create', 'Embedding.create', 'chat.completions.create', 'embeddings.create'],
+    'anthropic': ['completions.create', 'messages.create'],
+    'cohere': ['generate', 'embed', 'chat'],
+    'langchain': ['predict', 'run', 'call', 'invoke', 'stream'],
+    'huggingface': ['pipeline', 'inference'],
+    'requests': ['post', 'get', 'put', 'request'], # Generic HTTP
+    'httpx': ['post', 'get', 'put', 'request'],
+    'aiohttp': ['post', 'get', 'put', 'request']
+}
+
+# Sanitization Functions
+SANITIZERS = {
+    'anonymize', 'mask', 'hash', 'encrypt', 'sanitize', 'redact', 'clean', 'scrub'
+}
+
 class PythonAnalyzer(BaseAnalyzer):
     """Analyzes Python code for privacy issues using AST parsing"""
     
@@ -97,6 +114,11 @@ class PythonAnalyzer(BaseAnalyzer):
             file_path, code, consts, envmap, 
             findings, flows, taint_tracker
         )
+        
+        # Add parent pointers to AST nodes
+        for node in ast.walk(tree):
+            for child in ast.iter_child_nodes(node):
+                child._parent = node
         
         visitor.visit(tree)
         
@@ -421,18 +443,21 @@ class PythonAnalyzer(BaseAnalyzer):
                             )
                         
                         elif isinstance(node.value, ast.Subscript):
-                            # STRICT MODE: Only propagate if container is tainted
+                            # Check if container is tainted
                             is_container_tainted = False
                             if isinstance(node.value.value, ast.Name):
                                 if taint_tracker.is_tainted(node.value.value):
                                     is_container_tainted = True
                             
-                            if is_container_tainted and isinstance(node.value.slice, ast.Constant):
+                            if isinstance(node.value.slice, ast.Constant):
                                 key = str(node.value.slice.value)
                                 pii_types = taint_tracker.infer_pii_type(key)
-                                if pii_types and pii_types != ['unknown']:
+                                
+                                # If container is tainted OR key implies PII, mark as tainted
+                                if (is_container_tainted or (pii_types and pii_types != ['unknown'])):
+                                    # print(f"DEBUG: Tainting {target_name} from subscript {key}")
                                     taint_tracker.mark_tainted(
-                                        target_name, pii_types, node.lineno,
+                                        target_name, pii_types if pii_types else ['unknown'], node.lineno,
                                         "subscript", f"dict['{key}']"
                                     )
                         
@@ -539,6 +564,184 @@ class PythonAnalyzer(BaseAnalyzer):
             
             def visit_Call(self, node: ast.Call):
                 """Analyze function calls for privacy issues"""
+                
+                # Helper to resolve function name (e.g. 'openai.Completion.create')
+                def get_full_func_name(n):
+                    if isinstance(n, ast.Name): return n.id
+                    if isinstance(n, ast.Attribute):
+                        val = get_full_func_name(n.value)
+                        return f"{val}.{n.attr}" if val else n.attr
+                    return None
+
+                full_name = get_full_func_name(node.func)
+                
+                # 1. Check for Sanitization Functions
+                if full_name:
+                    # Check if function name contains sanitizer keywords
+                    is_sanitizer = any(s in full_name.lower() for s in SANITIZERS)
+                    if is_sanitizer:
+                        # If this is an assignment, mark target as sanitized
+                        parent = getattr(node, '_parent', None)
+                        if parent and isinstance(parent, ast.Assign):
+                            for target in parent.targets:
+                                if isinstance(target, ast.Name):
+                                    # Mark as tainted but sanitized
+                                    # We need to know WHAT was sanitized. Assume arg 0.
+                                    if node.args:
+                                        arg0 = node.args[0]
+                                        if isinstance(arg0, ast.Name) and taint_tracker.is_tainted(arg0):
+                                            info = taint_tracker.get_taint_info(arg0)
+                                            taint_tracker.mark_tainted(
+                                                target.id, info.pii_types, node.lineno,
+                                                "sanitization", info.taint_source,
+                                                context=self.current_function,
+                                                is_sanitized=True
+                                            )
+
+                # 2. Check for AI Sinks
+                is_ai_sink = False
+                sink_type = "unknown"
+                
+                if full_name:
+                    # print(f"DEBUG: Checking call {full_name}")
+                    for provider, methods in AI_SINKS.items():
+                        if any(m in full_name for m in methods):
+                            is_ai_sink = True
+                            sink_type = provider
+                            # print(f"DEBUG: AI Sink detected: {full_name} ({provider})")
+                            break
+                    
+                    # Special check for generic HTTP to AI domains (simplified)
+                    if not is_ai_sink and 'request' in full_name.lower():
+                        # Check URL arg if constant
+                        if node.args and isinstance(node.args[0], ast.Constant) and isinstance(node.args[0].value, str):
+                            url = node.args[0].value
+                            if 'api.openai.com' in url or 'anthropic' in url:
+                                is_ai_sink = True
+                                sink_type = "http_ai"
+
+                if is_ai_sink:
+                    # Check arguments for Taint
+                    for arg in node.args + [k.value for k in node.keywords]:
+                        # Helper to check taint recursively
+                        def check_taint(n):
+                            if isinstance(n, ast.Name):
+                                if taint_tracker.is_tainted(n):
+                                    return n.id, taint_tracker.get_taint_info(n)
+                            if isinstance(n, ast.Attribute) and isinstance(n.value, ast.Name):
+                                if taint_tracker.is_tainted(n.value):
+                                    return n.value.id, taint_tracker.get_taint_info(n.value)
+                            # Check dicts
+                            if isinstance(n, ast.Dict):
+                                for v in n.values:
+                                    res = check_taint(v)
+                                    if res: return res
+                            # Check lists/tuples
+                            if isinstance(n, (ast.List, ast.Tuple)):
+                                for elt in n.elts:
+                                    res = check_taint(elt)
+                                    if res: return res
+                            # Check f-strings
+                            if isinstance(n, ast.JoinedStr):
+                                for part in n.values:
+                                    if isinstance(part, ast.FormattedValue):
+                                        res = check_taint(part.value)
+                                        if res: return res
+                            return None
+
+                        res = check_taint(arg)
+                        if res:
+                            var_name, info = res
+                            
+                            # CRITICAL: Only report if NOT sanitized
+                            if not info.is_sanitized:
+                                findings.append(Finding(
+                                    rule="AI_PII_LEAK",
+                                    file=str(file_path),
+                                    line=node.lineno,
+                                    snippet=extract_ast_snippet(code, node.lineno, node.lineno),
+                                    severity=Severity.CRITICAL,
+                                    classification=ClassificationResult(
+                                        pii_types=info.pii_types,
+                                        category="ai_leak",
+                                        severity="critical",
+                                        confidence=0.95,
+                                        article="Art. 9", # High risk
+                                        legal_basis_required=True,
+                                        sectors=["ai"],
+                                        reasoning=f"Unsanitized PII ({', '.join(info.pii_types)}) sent to AI Sink ({sink_type})"
+                                    )
+                                ))
+                                
+                                taint_tracker.data_flow_edges.append(DataFlowEdge(
+                                    source_var=var_name,
+                                    target_var=f"AI_SINK:{sink_type}",
+                                    source_line=node.lineno,
+                                    target_line=node.lineno,
+                                    flow_type="sink",
+                                    context=f"AI Provider: {sink_type}"
+                                ))
+
+                # ===== NEW: Generic Output Sink Detection (print) =====
+                func_name = ""
+                if isinstance(node.func, ast.Name):
+                    func_name = node.func.id
+                
+                if func_name == 'print':
+                    # Helper to check a node for taint
+                    def check_node_for_taint(n):
+                        if isinstance(n, ast.Name) and taint_tracker.is_tainted(n.id):
+                            return n.id, taint_tracker.get_taint_info(n.id)
+                        # Handle f-strings
+                        if isinstance(n, ast.JoinedStr):
+                            for part in n.values:
+                                if isinstance(part, ast.FormattedValue):
+                                    res = check_node_for_taint(part.value)
+                                    if res: return res
+                        # Handle attribute access (user.email) - if base is tainted
+                        if isinstance(n, ast.Attribute) and isinstance(n.value, ast.Name):
+                             if taint_tracker.is_tainted(n.value.id):
+                                 return n.value.id, taint_tracker.get_taint_info(n.value.id)
+                        return None
+
+                    for arg in node.args:
+                        res = check_node_for_taint(arg)
+                        if res:
+                            var_name, taint_info = res
+                            
+                            # Aggressive check for High-Risk PII
+                            high_risk_pii = {'ssn', 'credit_card', 'password', 'token', 'secret', 'auth', 'financial'}
+                            detected_high_risk = set(taint_info.pii_types) & high_risk_pii
+                            
+                            if detected_high_risk:
+                                findings.append(Finding(
+                                    rule="PRINT_SENSITIVE_DATA",
+                                    file=str(file_path),
+                                    line=node.lineno,
+                                    snippet=extract_ast_snippet(code, node.lineno, node.lineno),
+                                    severity=Severity.HIGH,
+                                    classification=ClassificationResult(
+                                        pii_types=list(detected_high_risk),
+                                        category="data_leak",
+                                        severity="high",
+                                        confidence=0.9,
+                                        article="Art. 32",
+                                        legal_basis_required=True,
+                                        sectors=[],
+                                        reasoning=f"High-risk PII ({', '.join(detected_high_risk)}) printed to stdout"
+                                    )
+                                ))
+                                
+                                # Add Sink Edge
+                                taint_tracker.data_flow_edges.append(DataFlowEdge(
+                                    source_var=var_name,
+                                    target_var="print",
+                                    source_line=node.lineno,
+                                    target_line=node.lineno,
+                                    flow_type="sink",
+                                    context="stdout"
+                                ))
+
                 # Phase 2.4: Check for cross-file taint propagation
                 if outer_self.cross_file_analyzer and outer_self.current_module:
                     cross_taint = outer_self.cross_file_analyzer.propagate_function_call_taint(

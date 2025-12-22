@@ -70,11 +70,6 @@ AI_SINKS = {
     'aiohttp': ['post', 'get', 'put', 'request']
 }
 
-# Sanitization Functions
-SANITIZERS = {
-    'anonymize', 'mask', 'hash', 'encrypt', 'sanitize', 'redact', 'clean', 'scrub'
-}
-
 class PythonAnalyzer(BaseAnalyzer):
     """Analyzes Python code for privacy issues using AST parsing"""
     
@@ -583,28 +578,8 @@ class PythonAnalyzer(BaseAnalyzer):
 
                 full_name = get_full_func_name(node.func)
                 
-                # 1. Check for Sanitization Functions
-                if full_name:
-                    # Check if function name contains sanitizer keywords
-                    is_sanitizer = any(s in full_name.lower() for s in SANITIZERS)
-                    if is_sanitizer:
-                        # If this is an assignment, mark target as sanitized
-                        parent = getattr(node, '_parent', None)
-                        if parent and isinstance(parent, ast.Assign):
-                            for target in parent.targets:
-                                if isinstance(target, ast.Name):
-                                    # Mark as tainted but sanitized
-                                    # We need to know WHAT was sanitized. Assume arg 0.
-                                    if node.args:
-                                        arg0 = node.args[0]
-                                        if isinstance(arg0, ast.Name) and taint_tracker.is_tainted(arg0):
-                                            info = taint_tracker.get_taint_info(arg0)
-                                            taint_tracker.mark_tainted(
-                                                target.id, info.pii_types, node.lineno,
-                                                "sanitization", info.taint_source,
-                                                context=self.current_function,
-                                                is_sanitized=True
-                                            )
+                # 1. Check for Sanitization Functions - Handled by TaintTracker.propagate_through_assignment
+                # We rely on visit_Assign calling taint_tracker.propagate_through_assignment
 
                 # 1.5 Check for Generic HTTP Sinks (requests, httpx)
                 is_http_sink = False
@@ -626,21 +601,29 @@ class PythonAnalyzer(BaseAnalyzer):
                 if is_http_sink and http_url:
                     # Check if any argument is tainted
                     tainted_arg = None
+                    is_sanitized_flow = False
+                    
                     for arg in node.args + [k.value for k in node.keywords]:
                         if isinstance(arg, ast.Name) and taint_tracker.is_tainted(arg.id):
                             tainted_arg = arg.id
+                            info = taint_tracker.get_taint_info(arg.id)
+                            if info and info.is_sanitized:
+                                is_sanitized_flow = True
                             break
                     
                     source_var = tainted_arg if tainted_arg else "unknown_source"
                     
-                    taint_tracker.data_flow_edges.append(DataFlowEdge(
-                        source_var=source_var,
-                        target_var=f"requests:{full_name}", 
-                        source_line=node.lineno,
-                        target_line=node.lineno,
-                        flow_type="sink",
-                        context=f"URL: {http_url}"
-                    ))
+                    # Only add edge if tainted (even if sanitized, we want to show the safe flow)
+                    if tainted_arg:
+                        taint_tracker.data_flow_edges.append(DataFlowEdge(
+                            source_var=source_var,
+                            target_var=f"requests:{full_name}", 
+                            source_line=node.lineno,
+                            target_line=node.lineno,
+                            flow_type="sink",
+                            transformation="sanitized_transfer" if is_sanitized_flow else "unsafe_transfer",
+                            context=f"URL: {http_url}"
+                        ))
 
                 # 2. Check for AI Sinks
                 is_ai_sink = False

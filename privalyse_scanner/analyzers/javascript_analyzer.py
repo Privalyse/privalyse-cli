@@ -17,6 +17,11 @@ from .base_analyzer import BaseAnalyzer, AnalyzedSymbol, AnalyzedImport
 
 logger = logging.getLogger(__name__)
 
+JS_SANITIZERS = {
+    'hash', 'md5', 'sha1', 'sha256', 'bcrypt', 'scrypt',
+    'anonymize', 'mask', 'redact', 'obfuscate', 'encrypt',
+    'sanitize', 'clean', 'escape'
+}
 
 
 class JSTaintTracker:
@@ -486,6 +491,21 @@ class JavaScriptAnalyzer(BaseAnalyzer):
         source_name = self._get_node_name(value)
         target_name = self._get_node_name(target)
         
+        # Handle Sanitization: x = hash(y)
+        if value.type == 'CallExpression':
+            func_name = self._get_node_name(value.callee)
+            if func_name and any(s in func_name.lower() for s in JS_SANITIZERS):
+                # Check arguments for taint
+                for arg in value.arguments:
+                    arg_name = self._get_node_name(arg)
+                    if arg_name and self.taint_tracker.is_tainted(arg_name):
+                        info = self.taint_tracker.get_taint_info(arg_name)
+                        self.taint_tracker.mark_tainted(
+                            target_name, info.pii_types, source_name or func_name,
+                            context="sanitization", is_sanitized=True
+                        )
+                        return
+
         if not source_name or not target_name:
             return
 
@@ -513,6 +533,10 @@ class JavaScriptAnalyzer(BaseAnalyzer):
                 arg_name = self._get_node_name(arg)
                 if arg_name and self.taint_tracker.is_tainted(arg_name):
                     info = self.taint_tracker.get_taint_info(arg_name)
+                    
+                    # Skip if sanitized
+                    if info.is_sanitized:
+                        continue
                     
                     # Get context
                     ctx_lines, ctx_start, ctx_end = extract_context_lines(code, node)

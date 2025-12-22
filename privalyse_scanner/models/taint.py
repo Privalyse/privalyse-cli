@@ -62,6 +62,13 @@ class TaintTracker:
         self.function_params: Dict[str, List[str]] = {}  # function_name -> param names
         # DB column mapping for tracking PII storage
         self.db_column_mapping: Dict[str, Dict[str, Any]] = {}  # column_name -> {source_var, pii_types, table}
+        
+        # Known sanitization functions that remove or mitigate PII risk
+        self.sanitizers = {
+            'hash', 'md5', 'sha1', 'sha256', 'sha512', 'bcrypt', 'scrypt',
+            'anonymize', 'mask', 'redact', 'obfuscate', 'encrypt',
+            'len', 'count', 'bool', 'exists' # Aggregations are also safe
+        }
     
     def is_tainted(self, node: ast.AST) -> bool:
         """Check if an AST node represents a tainted value"""
@@ -72,6 +79,20 @@ class TaintTracker:
         elif isinstance(node, ast.Subscript):
             return self.is_tainted(node.value)
         return False
+    
+    def _get_func_name(self, node: ast.AST) -> Optional[str]:
+        """Extract function name from Call node"""
+        if isinstance(node, ast.Name):
+            return node.id
+        elif isinstance(node, ast.Attribute):
+            return node.attr
+        return None
+
+    def is_sanitizer(self, func_name: str) -> bool:
+        """Check if function is a known sanitizer"""
+        if not func_name:
+            return False
+        return any(s in func_name.lower() for s in self.sanitizers)
     
     def is_tainted_attribute(self, node: ast.Attribute) -> bool:
         """Check if attribute access refers to tainted data"""
@@ -294,12 +315,26 @@ class TaintTracker:
             tainted_args = [arg for arg in source.args if self.is_tainted(arg)]
             
             if tainted_args:
+                # Check if this is a sanitizer function
+                func_name = self._get_func_name(source.func)
+                is_sanitizer_call = self.is_sanitizer(func_name)
+                
                 # Aggregate PII types from all tainted arguments
                 all_pii_types = []
+                all_sanitized = True # Assume sanitized unless proven otherwise
+                
                 for arg in tainted_args:
                     taint = self.get_taint_info(arg)
                     if taint:
                         all_pii_types.extend(taint.pii_types)
+                        # If the argument wasn't sanitized, and this function isn't a sanitizer,
+                        # then the result is NOT sanitized.
+                        if not taint.is_sanitized and not is_sanitizer_call:
+                            all_sanitized = False
+                
+                # If the function IS a sanitizer, the result is sanitized
+                if is_sanitizer_call:
+                    all_sanitized = True
                 
                 self.mark_tainted(
                     target,
@@ -307,7 +342,8 @@ class TaintTracker:
                     line,
                     "function_call",
                     taint_source="function_result",
-                    context=context
+                    context=context,
+                    is_sanitized=all_sanitized
                 )
                 
                 # Add edges for each tainted arg
@@ -319,7 +355,7 @@ class TaintTracker:
                             source_line=self.tainted_vars[arg.id].source_line,
                             target_line=line,
                             flow_type="call",
-                            transformation="function_call",
+                            transformation=f"sanitizer:{func_name}" if is_sanitizer_call else "function_call",
                             context=context
                         ))
     

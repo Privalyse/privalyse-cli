@@ -160,6 +160,9 @@ When using Privalyse as a tool for an agent:
 ```
 This allows agents to **self-correct** code without needing to read the file separately.
 
+### JSON Schema for Agents
+For strict validation, you can use the official JSON schema located at `privalyse_scanner/models/output_schema.json`. This helps LLM agents understand the exact structure of the output they are processing.
+
 ---
 
 ## What It Does

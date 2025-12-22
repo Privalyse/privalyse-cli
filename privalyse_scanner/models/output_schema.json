@@ -1,0 +1,79 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Privalyse Scan Report",
+  "description": "Output schema for Privalyse static analysis tool",
+  "type": "object",
+  "properties": {
+    "summary": {
+      "type": "object",
+      "properties": {
+        "total": { "type": "integer" },
+        "critical": { "type": "integer" },
+        "high": { "type": "integer" },
+        "medium": { "type": "integer" },
+        "low": { "type": "integer" },
+        "info": { "type": "integer" }
+      },
+      "required": ["total"]
+    },
+    "compliance": {
+      "type": "object",
+      "description": "Findings grouped by compliance article"
+    },
+    "files": {
+      "type": "object",
+      "description": "Findings grouped by file path"
+    },
+    "findings": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/Finding"
+      }
+    },
+    "metadata": {
+      "type": "object"
+    }
+  },
+  "required": ["summary", "findings"],
+  "definitions": {
+    "Finding": {
+      "type": "object",
+      "properties": {
+        "rule": { "type": "string" },
+        "severity": { "type": "string", "enum": ["critical", "high", "medium", "low", "info"] },
+        "file": { "type": "string" },
+        "line": { "type": "integer" },
+        "snippet": { "type": "string" },
+        "classification": { "$ref": "#/definitions/ClassificationResult" },
+        "data_flow_type": { "type": "string" },
+        "tainted_variables": { "type": "array", "items": { "type": "string" } },
+        "taint_sources": { "type": "array", "items": { "type": "string" } },
+        "url": { "type": "string" },
+        "source_node": { "type": "string" },
+        "sink_node": { "type": "string" },
+        "flow_path": { "type": "array", "items": { "type": "string" } },
+        "suggested_fix": { "type": "string" },
+        "confidence_score": { "type": "number" },
+        "context_start_line": { "type": "integer" },
+        "context_end_line": { "type": "integer" },
+        "code_context": { "type": "array", "items": { "type": "string" } }
+      },
+      "required": ["rule", "severity", "file", "line", "snippet", "classification"]
+    },
+    "ClassificationResult": {
+      "type": "object",
+      "properties": {
+        "pii_types": { "type": "array", "items": { "type": "string" } },
+        "sectors": { "type": "array", "items": { "type": "string" } },
+        "severity": { "type": "string" },
+        "article": { "type": ["string", "null"] },
+        "gdpr_articles": { "type": "array", "items": { "type": "string" } },
+        "legal_basis_required": { "type": "boolean" },
+        "category": { "type": "string" },
+        "confidence": { "type": "number" },
+        "reasoning": { "type": "string" }
+      },
+      "required": ["pii_types", "sectors", "severity", "legal_basis_required", "category", "confidence"]
+    }
+  }
+}

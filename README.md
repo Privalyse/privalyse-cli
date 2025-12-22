@@ -9,7 +9,7 @@
 [![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
 [![X Follow](https://img.shields.io/twitter/follow/privalyse_dev?style=social)](https://x.com/privalyse_dev)
 
-> **Code is a black box. Data moves through invisible paths.**
+> **Code can be a a black box. Data moves through invisible paths.**
 > **Privalyse makes these paths explicit.**
 
 We are generating code faster than ever, but we are losing sight of where our data actually goes.
@@ -34,6 +34,34 @@ privalyse
 ```
 
 ---
+
+## 🔄 Continuous Monitoring (CI/CD)
+
+To achieve true visibility, Privalyse should be part of your continuous integration pipeline. This ensures that every code change is monitored for new data leaks.
+
+### GitHub Actions Example
+```yaml
+name: Privacy Monitor
+on: [push, pull_request]
+jobs:
+  privalyse-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Run Privalyse Scanner
+        uses: privalyse/privalyse-cli@v0.2.0
+        with:
+          root: '.'
+          format: 'markdown'
+          output: 'report.md'
+          
+      - name: Upload Report
+        uses: actions/upload-artifact@v4
+        with:
+          name: privacy-report
+          path: report.md
+```
 
 ## Installation
 
@@ -124,13 +152,15 @@ This allows agents to **self-correct** code without needing to read the file sep
 
 ## What It Does
 
-Privalyse performs static analysis to detect:
+Privalyse performs **Static Monitoring** (Detection) to ensure data safety:
 
-- **Hardcoded Secrets**: API keys, passwords, tokens in source code
-- **PII Leakage**: Personal data in logs, print statements, and debug output
-- **Insecure Data Flows**: Tracking where user data moves across your codebase
-- **GDPR Violations**: Mapping findings to specific GDPR articles (Art. 5, 6, 9, 32)
-- **Security Misconfigurations**: HTTP vs HTTPS, CORS, security headers
+- **Data Flow Visualization**: Tracking where user data moves across your codebase (Source -> Sink).
+- **Hardcoded Secrets**: Detecting API keys, passwords, and tokens.
+- **PII Leakage**: Identifying Personal Identifiable Information in logs and external calls.
+- **GDPR Violations**: Mapping findings to specific GDPR articles (Art. 5, 6, 9, 32).
+- **Security Misconfigurations**: Checking for HTTP vs HTTPS, CORS, and security headers.
+
+> **Note on Monitoring:** In the context of this CLI, "Monitoring" refers to the continuous detection of vulnerabilities in your codebase (e.g., via CI/CD or pre-commit hooks). It does not currently perform live runtime traffic interception.
 
 The scanner uses AST (Abstract Syntax Tree) parsing for both Python and JavaScript/TypeScript to ensure deep understanding of your code structure.
 

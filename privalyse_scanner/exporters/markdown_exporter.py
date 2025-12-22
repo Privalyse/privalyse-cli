@@ -206,9 +206,30 @@ class MarkdownExporter:
         fix = self._generate_fix_suggestion(finding)
         fix_section = f"**✅ How to Fix:**\n{fix}"
         
+        # Flow Story
+        flow_section = ""
+        flow_path = finding.get('flow_path', [])
+        if flow_path:
+            flow_section = "**🌊 Data Flow Story:**\n"
+            flow_section += "```mermaid\nflowchart TD\n"
+            for i, step in enumerate(flow_path):
+                step_clean = str(step).replace('"', "'").replace('(', '').replace(')', '')
+                if i == 0:
+                    flow_section += f"    step{i}([\"🟢 {step_clean}\"])\n"
+                elif i == len(flow_path) - 1:
+                    flow_section += f"    step{i}([\"🔴 {step_clean}\"])\n"
+                else:
+                    flow_section += f"    step{i}[\"🔄 {step_clean}\"]\n"
+                
+                if i > 0:
+                    flow_section += f"    step{i-1} --> step{i}\n"
+            flow_section += "```"
+        
         parts = [header, location]
         if pii_section:
             parts.append(pii_section)
+        if flow_section:
+            parts.append(flow_section)
         if code_section:
             parts.append(code_section)
         parts.append(fix_section)

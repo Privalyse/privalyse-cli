@@ -386,8 +386,7 @@ class PythonAnalyzer(BaseAnalyzer):
                                     confidence_score=confidence,
                                     context_start_line=ctx_start,
                                     context_end_line=ctx_end,
-                                    code_context=ctx_lines
-                                )),
+                                    code_context=ctx_lines,
                                     metadata={
                                         'description': f'Hardcoded {secret_type} detected in source code',
                                         'variable': target_name,

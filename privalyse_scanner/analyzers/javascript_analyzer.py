@@ -539,7 +539,6 @@ class JavaScriptAnalyzer(BaseAnalyzer):
                         context_end_line=ctx_end,
                         code_context=ctx_lines
                     ))
-                    ))
 
     def _get_node_name(self, node):
         """Helper to get string representation of a node (e.g. 'req.body')."""

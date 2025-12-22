@@ -24,6 +24,7 @@ from privalyse_scanner.models.config import ScanConfig
 from privalyse_scanner.models.finding import Finding, ClassificationResult
 from privalyse_scanner.exporters import MarkdownExporter, HTMLExporter, JSONExporter
 from privalyse_scanner.utils.visualizer import FlowVisualizer
+from privalyse_scanner.utils.config_loader import ConfigLoader
 
 
 class PrivalyseJSONEncoder(json.JSONEncoder):
@@ -143,14 +144,16 @@ Examples:
     else:
         logger.info("🔍 Privalyse Scanner v0.1 (Modular)")
     
-    # Create config
-    config = ScanConfig(
-        root_path=args.root,
-        max_workers=args.max_workers,
-        max_files=args.max_files,
-        verbose=args.verbose,
-        debug=args.debug,
-    )
+    # Load config from file
+    config = ConfigLoader.load_config(args.root)
+    
+    # Override with CLI args
+    config.root_path = args.root
+    if args.max_workers != 8: config.max_workers = args.max_workers
+    if args.max_files: config.max_files = args.max_files
+    if args.debug: config.debug = True
+    if args.verbose: config.verbose = True
+    if args.exclude: config.exclude_patterns.extend(args.exclude)
     
     # Load .privalyseignore if it exists and add file patterns to config
     ignore_file = config.root_path / '.privalyseignore'

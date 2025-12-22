@@ -310,6 +310,23 @@ class PrivalyseScanner:
                         finding.severity = 'high' # Elevate risk
                         finding.classification.reasoning += f" [Data Sovereignty Risk: Data sent to {sink_info.provider} ({sink_info.country})]"
                     
+                    # ===== POLICY ENFORCEMENT =====
+                    policy = self.config.policy
+                    
+                    # 1. Check Blocked Countries
+                    if not policy.is_country_allowed(sink_info.country):
+                        finding.severity = 'critical'
+                        finding.classification.severity = 'critical'
+                        finding.classification.reasoning += f" [POLICY VIOLATION: Country {sink_info.country} is blocked]"
+                        finding.rule = "POLICY_VIOLATION_COUNTRY"
+                    
+                    # 2. Check Blocked Providers
+                    if not policy.is_provider_allowed(sink_info.provider):
+                        finding.severity = 'critical'
+                        finding.classification.severity = 'critical'
+                        finding.classification.reasoning += f" [POLICY VIOLATION: Provider {sink_info.provider} is blocked]"
+                        finding.rule = "POLICY_VIOLATION_PROVIDER"
+
                     enriched_count += 1
         
         if enriched_count > 0:

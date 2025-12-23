@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.3.1] - 2025-12-23 - Patch Release
+
+### Fixes
+- **Snippet Extraction**: Fixed a bug where code snippets were missing from findings in the report.
+- **Python Analyzer**: Corrected AST node handling for `extract_ast_snippet` calls.
+
 ## [0.3.0] - 2025-12-22 - The AI-Native Privacy Release
 
 Major release introducing AI Guardrails, Data Sovereignty checks, and Policy as Code.

@@ -71,7 +71,7 @@ jobs:
       - uses: actions/checkout@v4
       
       - name: Run Privalyse Scanner
-        uses: privalyse/privalyse-cli@v0.2.0
+        uses: privalyse/privalyse-cli@v0.3.0
         with:
           root: '.'
           format: 'markdown'

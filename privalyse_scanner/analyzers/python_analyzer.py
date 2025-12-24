@@ -725,8 +725,8 @@ class PythonAnalyzer(BaseAnalyzer):
                 if func_name == 'print':
                     # Helper to check a node for taint
                     def check_node_for_taint(n):
-                        if isinstance(n, ast.Name) and taint_tracker.is_tainted(n.id):
-                            return n.id, taint_tracker.get_taint_info(n.id)
+                        if isinstance(n, ast.Name) and taint_tracker.is_tainted(n):
+                            return n.id, taint_tracker.get_taint_info(n)
                         # Handle f-strings
                         if isinstance(n, ast.JoinedStr):
                             for part in n.values:
@@ -735,8 +735,8 @@ class PythonAnalyzer(BaseAnalyzer):
                                     if res: return res
                         # Handle attribute access (user.email) - if base is tainted
                         if isinstance(n, ast.Attribute) and isinstance(n.value, ast.Name):
-                             if taint_tracker.is_tainted(n.value.id):
-                                 return n.value.id, taint_tracker.get_taint_info(n.value.id)
+                             if taint_tracker.is_tainted(n.value):
+                                 return n.value.id, taint_tracker.get_taint_info(n.value)
                         return None
 
                     for arg in node.args:

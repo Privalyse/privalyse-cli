@@ -7,21 +7,13 @@ from pathlib import Path
 
 try:
     import esprima
+    HAS_ESPRIMA = True
 except ImportError:
-    esprima = None
+    HAS_ESPRIMA = False
 
 from ..models.finding import Finding, ClassificationResult
 from ..models.taint import DataFlowEdge, TaintInfo
-from ..utils.helpers import extract_context_lines
 from .base_analyzer import BaseAnalyzer, AnalyzedSymbol, AnalyzedImport
-
-logger = logging.getLogger(__name__)
-
-JS_SANITIZERS = {
-    'hash', 'md5', 'sha1', 'sha256', 'bcrypt', 'scrypt',
-    'anonymize', 'mask', 'redact', 'obfuscate', 'encrypt',
-    'sanitize', 'clean', 'escape'
-}
 
 
 class JSTaintTracker:
@@ -262,9 +254,15 @@ class JavaScriptAnalyzer(BaseAnalyzer):
         # Initialize taint tracker for this file
         self.taint_tracker = JSTaintTracker()
         
-        # 0. Perform AST-based Taint Analysis (Deep)
-        ast_findings = self._perform_ast_taint_analysis(file_path, code, module_name=module_name)
-        findings.extend(ast_findings)
+        # 0. Try AST-based analysis first (Deep Taint Analysis)
+        if HAS_ESPRIMA:
+            try:
+                ast_findings = self._analyze_with_ast(file_path, code)
+                findings.extend(ast_findings)
+                # If AST analysis succeeds, we might want to skip regex or merge results
+                # For now, we'll let regex run too as a fallback/complement
+            except Exception as e:
+                logging.getLogger(__name__).debug(f"AST analysis failed for {file_path}: {e}")
 
         # 1. Perform Lite Taint Analysis (Assignments & Propagation)
         taint_findings = self._perform_taint_analysis(file_path, code, module_name=module_name)
@@ -298,338 +296,6 @@ class JavaScriptAnalyzer(BaseAnalyzer):
         
         # Return findings and collected data flow edges
         return findings, self.taint_tracker.data_flow_edges
-
-    def extract_imports(self, code: str) -> List[AnalyzedImport]:
-        """
-        Extract JavaScript imports using Esprima AST.
-        Supports ES6 imports and CommonJS require().
-        """
-        imports = []
-        if not esprima:
-            # logger.warning("Esprima not installed. Skipping JS import analysis.")
-            return imports
-
-        try:
-            # Parse as module to support 'import' statements. Enable JSX.
-            tree = esprima.parseModule(code, {'loc': True, 'tolerant': True, 'jsx': True})
-            
-            for node in tree.body:
-                # ES6 Import: import { x } from 'y';
-                if node.type == 'ImportDeclaration':
-                    source = node.source.value
-                    imported_names = []
-                    for specifier in node.specifiers:
-                        if specifier.type == 'ImportSpecifier':
-                            imported_names.append(specifier.imported.name)
-                        elif specifier.type == 'ImportDefaultSpecifier':
-                            imported_names.append('default')
-                        elif specifier.type == 'ImportNamespaceSpecifier':
-                            imported_names.append('*')
-                    
-                    imports.append(AnalyzedImport(
-                        source_module=source,
-                        imported_names=imported_names,
-                        line=node.loc.start.line
-                    ))
-                
-                # CommonJS: const x = require('y');
-                elif node.type == 'VariableDeclaration':
-                    for decl in node.declarations:
-                        if (decl.init and decl.init.type == 'CallExpression' and 
-                            hasattr(decl.init.callee, 'name') and decl.init.callee.name == 'require' and decl.init.arguments):
-                            
-                            arg = decl.init.arguments[0]
-                            if arg.type == 'Literal':
-                                source = arg.value
-                                imports.append(AnalyzedImport(
-                                    source_module=source,
-                                    imported_names=[], # CommonJS usually imports the whole module object
-                                    line=node.loc.start.line
-                                ))
-
-        except Exception as e:
-            # Fallback or ignore syntax errors (e.g. TS syntax that esprima can't handle)
-            # logger.debug(f"Error parsing JS imports: {e}")
-            pass
-            
-        return imports
-
-    def extract_symbols(self, code: str) -> List[AnalyzedSymbol]:
-        """
-        Extract JavaScript exports and top-level definitions using Esprima AST.
-        """
-        symbols = []
-        if not esprima:
-            return symbols
-
-        try:
-            tree = esprima.parseModule(code, {'loc': True, 'tolerant': True, 'jsx': True})
-            
-            for node in tree.body:
-                # ES6 Export: export const x = ...
-                if node.type == 'ExportNamedDeclaration':
-                    if node.declaration:
-                        # export const x = ...
-                        if node.declaration.type == 'VariableDeclaration':
-                            for decl in node.declaration.declarations:
-                                if decl.id.type == 'Identifier':
-                                    symbols.append(AnalyzedSymbol(
-                                        name=decl.id.name,
-                                        type='variable',
-                                        line=node.loc.start.line,
-                                        is_exported=True,
-                                        signature=f"export const {decl.id.name}"
-                                    ))
-                        # export function f() {}
-                        elif node.declaration.type == 'FunctionDeclaration':
-                            symbols.append(AnalyzedSymbol(
-                                name=node.declaration.id.name,
-                                type='function',
-                                line=node.loc.start.line,
-                                is_exported=True,
-                                signature=f"export function {node.declaration.id.name}"
-                            ))
-                        # export class C {}
-                        elif node.declaration.type == 'ClassDeclaration':
-                            symbols.append(AnalyzedSymbol(
-                                name=node.declaration.id.name,
-                                type='class',
-                                line=node.loc.start.line,
-                                is_exported=True,
-                                signature=f"export class {node.declaration.id.name}"
-                            ))
-                
-                # ES6 Default Export: export default ...
-                elif node.type == 'ExportDefaultDeclaration':
-                    name = "default"
-                    if hasattr(node.declaration, 'id') and node.declaration.id:
-                        name = node.declaration.id.name
-                    
-                    symbols.append(AnalyzedSymbol(
-                        name=name,
-                        type='export_default',
-                        line=node.loc.start.line,
-                        is_exported=True,
-                        signature="export default"
-                    ))
-
-                # Top-level definitions (internal symbols)
-                elif node.type == 'FunctionDeclaration':
-                     symbols.append(AnalyzedSymbol(
-                        name=node.id.name,
-                        type='function',
-                        line=node.loc.start.line,
-                        is_exported=False,
-                        signature=f"function {node.id.name}"
-                    ))
-                elif node.type == 'ClassDeclaration':
-                     symbols.append(AnalyzedSymbol(
-                        name=node.id.name,
-                        type='class',
-                        line=node.loc.start.line,
-                        is_exported=False,
-                        signature=f"class {node.id.name}"
-                    ))
-
-        except Exception as e:
-            # logger.debug(f"Error parsing JS symbols: {e}")
-            pass
-            
-        return symbols
-
-    def _perform_ast_taint_analysis(self, file_path: Path, code: str, module_name: str = None) -> List[Finding]:
-        """
-        Perform taint analysis using Esprima AST.
-        """
-        findings = []
-        if not esprima:
-            return findings
-
-        try:
-            tree = esprima.parseModule(code, {'loc': True, 'tolerant': True, 'jsx': True})
-            
-            # Simple visitor function
-            def visit(node):
-                if not node: return
-                
-                # Handle Variable Declarations: const x = source
-                if node.type == 'VariableDeclaration':
-                    for decl in node.declarations:
-                        if decl.init:
-                            self._analyze_assignment(decl.id, decl.init, node.loc.start.line, findings)
-                
-                # Handle Assignments: x = source
-                elif node.type == 'AssignmentExpression':
-                    self._analyze_assignment(node.left, node.right, node.loc.start.line, findings)
-                
-                # Handle Call Expressions (Sinks): sink(tainted)
-                elif node.type == 'CallExpression':
-                    self._analyze_call(node, node.loc.start.line, findings, file_path.as_posix(), code)
-                
-                # Recursively visit children
-                for key, value in node.items():
-                    if key in ['loc', 'range', 'type']: continue
-                    if isinstance(value, list):
-                        for item in value:
-                            if hasattr(item, 'type'):
-                                visit(item)
-                    elif hasattr(value, 'type'):
-                        visit(value)
-
-            visit(tree)
-            
-        except Exception as e:
-            # logger.debug(f"AST Analysis failed for {file_path}: {e}")
-            pass
-            
-        return findings
-
-    def _analyze_assignment(self, target, value, line, findings):
-        """Analyze assignment for taint sources."""
-        # Check if value is a source
-        # Example: req.body, req.query
-        source_name = self._get_node_name(value)
-        target_name = self._get_node_name(target)
-        
-        # Handle Sanitization: x = hash(y)
-        if value.type == 'CallExpression':
-            func_name = self._get_node_name(value.callee)
-            if func_name and any(s in func_name.lower() for s in JS_SANITIZERS):
-                # Check arguments for taint
-                for arg in value.arguments:
-                    arg_name = self._get_node_name(arg)
-                    if arg_name and self.taint_tracker.is_tainted(arg_name):
-                        info = self.taint_tracker.get_taint_info(arg_name)
-                        self.taint_tracker.mark_tainted(
-                            target_name, info.pii_types, source_name or func_name,
-                            context="sanitization", is_sanitized=True
-                        )
-                        return
-
-        if not source_name or not target_name:
-            return
-
-        # 1. Request Objects (Express/Node)
-        if 'req.body' in source_name or 'req.query' in source_name or 'req.params' in source_name:
-            self.taint_tracker.mark_tainted(
-                target_name, ['user_input'], source_name, context="request_handler"
-            )
-        
-        # 2. Fetch Results (Frontend)
-        # const data = await response.json()
-        if 'response.json' in source_name:
-             self.taint_tracker.mark_tainted(
-                target_name, ['api_data'], source_name, context="fetch_response"
-            )
-
-    def _analyze_call(self, node, line, findings, file_path, code):
-        """Analyze function call for sinks."""
-        func_name = self._get_node_name(node.callee)
-        if not func_name: return
-        
-        # 2. AI SDK Sinks (LangChain, OpenAI)
-        # e.g. openai.createCompletion({ prompt: user_input })
-        # e.g. chain.call({ input: user_input })
-        is_ai_sink = False
-        sink_provider = "unknown"
-        
-        if any(x in func_name for x in ['openai.create', 'chain.call', 'chain.invoke', 'model.predict', 'llm.call']):
-            is_ai_sink = True
-            sink_provider = "AI_Model"
-            if 'openai' in func_name: sink_provider = "OpenAI"
-            if 'chain' in func_name: sink_provider = "LangChain"
-            
-        if is_ai_sink:
-            # Check arguments (usually an object)
-            for arg in node.arguments:
-                # If arg is an object literal { prompt: x }
-                if arg.type == 'ObjectExpression':
-                    for prop in arg.properties:
-                        if prop.value.type == 'Identifier':
-                            val_name = prop.value.name
-                            if self.taint_tracker.is_tainted(val_name):
-                                info = self.taint_tracker.get_taint_info(val_name)
-                                if not info.is_sanitized:
-                                    ctx_lines, ctx_start, ctx_end = extract_context_lines(code, node)
-                                    findings.append(Finding(
-                                        rule="AI_PII_LEAK",
-                                        file=file_path,
-                                        line=line,
-                                        snippet=f"{func_name}({{ ... {val_name} ... }})",
-                                        severity="critical",
-                                        classification=ClassificationResult(
-                                            pii_types=info.pii_types,
-                                            category="ai_leak",
-                                            severity="critical",
-                                            confidence=0.95,
-                                            article="Art. 9",
-                                            legal_basis_required=True,
-                                            sectors=["ai"],
-                                            reasoning=f"Unsanitized PII ({', '.join(info.pii_types)}) sent to AI Sink ({sink_provider})"
-                                        ),
-                                        suggested_fix=f"Sanitize data before sending to AI model.",
-                                        code_context=ctx_lines,
-                                        context_start_line=ctx_start,
-                                        context_end_line=ctx_end
-                                    ))
-                                    
-                                    self.taint_tracker.add_edge(
-                                        val_name, f"AI_SINK:{sink_provider}", line, "sink", context=f"AI Provider: {sink_provider}"
-                                    )
-
-        # 1. Logging Sinks
-        if func_name in ['console.log', 'console.error', 'logger.info']:
-            for arg in node.arguments:
-                arg_name = self._get_node_name(arg)
-                if arg_name and self.taint_tracker.is_tainted(arg_name):
-                    info = self.taint_tracker.get_taint_info(arg_name)
-                    
-                    # Skip if sanitized
-                    if info.is_sanitized:
-                        continue
-                    
-                    # Get context
-                    ctx_lines, ctx_start, ctx_end = extract_context_lines(code, node)
-                    
-                    findings.append(Finding(
-                        rule="LOG_PII",
-                        file=file_path,
-                        line=line,
-                        snippet=f"{func_name}({arg_name})",
-                        severity="medium",
-                        classification=ClassificationResult(
-                            pii_types=info.pii_types,
-                            category="logging",
-                            severity="medium",
-                            confidence=0.8,
-                            article="Art. 32",
-                            legal_basis_required=True,
-                            sectors=[],
-                            reasoning=f"Tainted variable '{arg_name}' logged to console"
-                        ),
-                        suggested_fix="Remove PII from logs or use a sanitizer/masking function.",
-                        confidence_score=0.8,
-                        context_start_line=ctx_start,
-                        context_end_line=ctx_end,
-                        code_context=ctx_lines
-                    ))
-
-    def _get_node_name(self, node):
-        """Helper to get string representation of a node (e.g. 'req.body')."""
-        if not node: return None
-        if node.type == 'Identifier':
-            return node.name
-        if node.type == 'MemberExpression':
-            obj = self._get_node_name(node.object)
-            prop = self._get_node_name(node.property)
-            if obj and prop:
-                return f"{obj}.{prop}"
-        if node.type == 'CallExpression':
-             callee = self._get_node_name(node.callee)
-             return f"{callee}()"
-        if node.type == 'AwaitExpression':
-            return self._get_node_name(node.argument)
-        return None
 
     def _analyze_secrets(self, file_path: Path, code: str) -> List[Finding]:
         """
@@ -717,15 +383,10 @@ class JavaScriptAnalyzer(BaseAnalyzer):
                     # print(f"DEBUG: Matched token with confidence 0.9")
                 
                 if secret_type:
-                    # Get context
-                    start_idx = max(0, i - 2)
-                    end_idx = min(len(lines), i + 3)
-                    ctx_lines = lines[start_idx:end_idx]
-
                     findings.append(Finding(
                         rule="HARDCODED_SECRET",
                         severity="critical" if confidence > 0.8 else "high",
-                        file=file_path.as_posix(),
+                        file=str(file_path),
                         line=i + 1,
                         snippet=f'{var_name} = "***"',
                         classification=ClassificationResult(
@@ -738,12 +399,7 @@ class JavaScriptAnalyzer(BaseAnalyzer):
                             confidence=confidence,
                             reasoning=f"Hardcoded {secret_type} detected in variable '{var_name}'",
                             gdpr_articles=["Art. 32"]
-                        ),
-                        suggested_fix="Move secret to environment variable (process.env) or secrets manager.",
-                        confidence_score=confidence,
-                        context_start_line=start_idx + 1,
-                        context_end_line=end_idx,
-                        code_context=ctx_lines
+                        )
                     ))
                     
         return findings
@@ -781,7 +437,7 @@ class JavaScriptAnalyzer(BaseAnalyzer):
             #     findings.append(Finding(
             #         rule="INFRA_EXPRESS_HELMET_MISSING",
             #         severity="medium",
-            #         file=file_path.as_posix(),
+            #         file=str(file_path),
             #         line=1, # General file finding
             #         snippet="const app = express();",
             #         classification=ClassificationResult(
@@ -801,7 +457,7 @@ class JavaScriptAnalyzer(BaseAnalyzer):
             #     findings.append(Finding(
             #         rule="INFRA_EXPRESS_FINGERPRINT",
             #         severity="low",
-            #         file=file_path.as_posix(),
+            #         file=str(file_path),
             #         line=1,
             #         snippet="const app = express();",
             #         classification=ClassificationResult(
@@ -1036,7 +692,7 @@ class JavaScriptAnalyzer(BaseAnalyzer):
                         finding = Finding(
                             rule=rule,
                             severity="high",
-                            file=file_path.as_posix(),
+                            file=str(file_path),
                             line=line_num,
                             snippet=line.strip()[:200],
                             classification=ClassificationResult(
@@ -1108,7 +764,7 @@ class JavaScriptAnalyzer(BaseAnalyzer):
                     finding = Finding(
                         rule="BACKEND_PII_INPUT",
                         severity="medium",
-                        file=file_path.as_posix(),
+                        file=str(file_path),
                         line=line_num,
                         snippet=line.strip()[:200],
                         classification=ClassificationResult(
@@ -1129,7 +785,7 @@ class JavaScriptAnalyzer(BaseAnalyzer):
                 finding = Finding(
                     rule="BACKEND_PII_INPUT",
                     severity="medium",
-                    file=file_path.as_posix(),
+                    file=str(file_path),
                     line=line_num,
                     snippet=line.strip()[:200],
                     classification=ClassificationResult(
@@ -1161,7 +817,7 @@ class JavaScriptAnalyzer(BaseAnalyzer):
                         finding = Finding(
                             rule="BACKEND_PII_INPUT",
                             severity="medium",
-                            file=file_path.as_posix(),
+                            file=str(file_path),
                             line=line_num,
                             snippet=line.strip()[:200],
                             classification=ClassificationResult(
@@ -1205,7 +861,7 @@ class JavaScriptAnalyzer(BaseAnalyzer):
                     finding = Finding(
                         rule="DB_MODEL_PII",
                         severity="medium",
-                        file=file_path.as_posix(),
+                        file=str(file_path),
                         line=line_num,
                         snippet=line.strip()[:200],
                         classification=ClassificationResult(
@@ -1232,7 +888,7 @@ class JavaScriptAnalyzer(BaseAnalyzer):
                     finding = Finding(
                         rule="DB_MODEL_PII",
                         severity="medium",
-                        file=file_path.as_posix(),
+                        file=str(file_path),
                         line=line_num,
                         snippet=line.strip()[:200],
                         classification=ClassificationResult(
@@ -1431,7 +1087,7 @@ class JavaScriptAnalyzer(BaseAnalyzer):
                     finding = Finding(
                         rule=f"TRACKING_{rule_name}",
                         severity=severity,
-                        file=file_path.as_posix(),
+                        file=str(file_path),
                         line=line_num,
                         snippet=line.strip()[:200],
                         classification=ClassificationResult(
@@ -1480,7 +1136,7 @@ class JavaScriptAnalyzer(BaseAnalyzer):
                         finding = Finding(
                             rule=f"FORM_FIELD_{pii_type.upper()}",
                             severity=config["severity"],
-                            file=file_path.as_posix(),
+                            file=str(file_path),
                             line=line_num,
                             snippet=line.strip()[:200],
                             classification=ClassificationResult(
@@ -1539,7 +1195,7 @@ class JavaScriptAnalyzer(BaseAnalyzer):
                     finding = Finding(
                         rule="AI_PII_LEAK",
                         severity="critical",
-                        file=file_path.as_posix(),
+                        file=str(file_path),
                         line=line_num,
                         snippet=line.strip()[:200],
                         classification=ClassificationResult(
@@ -1558,7 +1214,7 @@ class JavaScriptAnalyzer(BaseAnalyzer):
                     finding = Finding(
                         rule="HTTP_INSECURE_API",
                         severity="high",
-                        file=file_path.as_posix(),
+                        file=str(file_path),
                         line=line_num,
                         snippet=line.strip()[:200],
                         classification=ClassificationResult(
@@ -1628,7 +1284,7 @@ class JavaScriptAnalyzer(BaseAnalyzer):
                     finding = Finding(
                         rule="AI_PII_LEAK",
                         severity=severity,
-                        file=file_path.as_posix(),
+                        file=str(file_path),
                         line=line_num,
                         snippet=line.strip()[:200],
                         classification=ClassificationResult(
@@ -1648,7 +1304,7 @@ class JavaScriptAnalyzer(BaseAnalyzer):
                     finding = Finding(
                         rule="HTTP_INSECURE_API",
                         severity="high",
-                        file=file_path.as_posix(),
+                        file=str(file_path),
                         line=line_num,
                         snippet=line.strip()[:200],
                         classification=ClassificationResult(
@@ -1731,7 +1387,7 @@ class JavaScriptAnalyzer(BaseAnalyzer):
                     finding = Finding(
                         rule="INSECURE_BROWSER_STORAGE",
                         severity="high",
-                        file=file_path.as_posix(),
+                        file=str(file_path),
                         line=line_num,
                         snippet=line_content[:200],
                         classification=ClassificationResult(
@@ -1764,7 +1420,7 @@ class JavaScriptAnalyzer(BaseAnalyzer):
                      finding = Finding(
                         rule="INSECURE_COOKIE_STORAGE",
                         severity="medium",
-                        file=file_path.as_posix(),
+                        file=str(file_path),
                         line=line_num,
                         snippet=line_content[:200],
                         classification=ClassificationResult(
@@ -1781,3 +1437,253 @@ class JavaScriptAnalyzer(BaseAnalyzer):
                      findings.append(finding)
         
         return findings
+
+    def _analyze_with_ast(self, file_path: Path, code: str) -> List[Finding]:
+        """
+        Perform deep taint analysis using Esprima AST.
+        """
+        findings = []
+        try:
+            # Parse JS/TS code (Note: esprima is primarily for JS, might fail on complex TS syntax)
+            # For TS, we might need to strip types or use a different parser in future
+            tree = esprima.parseScript(code, {'loc': True, 'range': True, 'tokens': True})
+            
+            visitor = JSASTVisitor(self.taint_tracker, file_path, code)
+            visitor.visit(tree)
+            
+            # Convert taint tracker findings to actual Finding objects
+            # This logic would need to be expanded based on what the visitor collects
+            # For now, the visitor populates self.taint_tracker
+            
+        except Exception as e:
+            # logging.getLogger(__name__).warning(f"Esprima parsing error: {e}")
+            raise e
+            
+        return findings
+
+
+class JSASTVisitor:
+    """
+    Traverses the Esprima AST to track variable assignments and function calls.
+    """
+    def __init__(self, taint_tracker: JSTaintTracker, file_path: Path, code: str):
+        self.taint_tracker = taint_tracker
+        self.file_path = file_path
+        self.code = code
+        self.scope_stack = [{}] # Stack of scopes (variable maps)
+
+    def visit(self, node):
+        """Recursive visit method"""
+        if not node:
+            return
+
+        # Esprima nodes are dicts or objects depending on how they are accessed
+        # If it's a dict, we access via keys. If object, via attributes.
+        # The debug output showed dicts.
+        
+        node_type = node.get('type') if isinstance(node, dict) else getattr(node, 'type', None)
+        
+        if not node_type:
+            return
+
+        method_name = 'visit_' + node_type
+        visitor = getattr(self, method_name, self.generic_visit)
+        return visitor(node)
+
+    def generic_visit(self, node):
+        """Visit all children of a node"""
+        # Handle dict-like nodes
+        if isinstance(node, dict):
+            for key, value in node.items():
+                if key in ['loc', 'range', 'type', 'tokens']:
+                    continue
+                if isinstance(value, list):
+                    for item in value:
+                        if isinstance(item, dict) and 'type' in item:
+                            self.visit(item)
+                        elif hasattr(item, 'type'):
+                             self.visit(item)
+                elif isinstance(value, dict) and 'type' in value:
+                    self.visit(value)
+                elif hasattr(value, 'type'):
+                    self.visit(value)
+        # Handle object-like nodes (if esprima returns objects)
+        else:
+             for key in dir(node):
+                if key.startswith('_') or key in ['loc', 'range', 'type', 'tokens']:
+                    continue
+                value = getattr(node, key)
+                if isinstance(value, list):
+                    for item in value:
+                         if hasattr(item, 'type') or (isinstance(item, dict) and 'type' in item):
+                            self.visit(item)
+                elif hasattr(value, 'type') or (isinstance(value, dict) and 'type' in value):
+                    self.visit(value)
+
+    def visit_VariableDeclaration(self, node):
+        """Handle const/let/var declarations"""
+        # Access properties safely for both dict/object
+        declarations = node.get('declarations') if isinstance(node, dict) else node.declarations
+        loc = node.get('loc') if isinstance(node, dict) else node.loc
+        
+        for decl in declarations:
+            init = decl.get('init') if isinstance(decl, dict) else decl.init
+            id_node = decl.get('id') if isinstance(decl, dict) else decl.id
+            
+            if init:
+                line = loc['start']['line'] if isinstance(loc, dict) else loc.start.line
+                self._handle_assignment(id_node, init, line)
+        self.generic_visit(node)
+
+    def visit_AssignmentExpression(self, node):
+        """Handle assignments (x = y)"""
+        left = node.get('left') if isinstance(node, dict) else node.left
+        right = node.get('right') if isinstance(node, dict) else node.right
+        loc = node.get('loc') if isinstance(node, dict) else node.loc
+        line = loc['start']['line'] if isinstance(loc, dict) else loc.start.line
+        
+        self._handle_assignment(left, right, line)
+        self.generic_visit(node)
+
+    def _handle_assignment(self, target_node, source_node, line):
+        """Process assignment logic for taint tracking"""
+        target_name = self._get_node_name(target_node)
+        source_name = self._get_node_name(source_node)
+        
+        # logging.warning(f"DEBUG: Assignment {target_name} = {source_name} (Line {line})")
+        
+        if not target_name:
+            return
+
+        # 1. Direct Aliasing (x = y)
+        if source_name and self.taint_tracker.is_tainted(source_name):
+            taint_info = self.taint_tracker.get_taint_info(source_name)
+            if taint_info:
+                self.taint_tracker.mark_tainted(
+                    name=target_name,
+                    pii_types=taint_info.pii_types,
+                    source=taint_info.taint_source,
+                    context=taint_info.context,
+                    is_sanitized=taint_info.is_sanitized
+                )
+                self.taint_tracker.add_edge(
+                    source=source_name,
+                    target=target_name,
+                    line=line,
+                    flow_type="assignment"
+                )
+
+        # 2. Source Detection (x = req.body)
+        if source_name:
+            if self._is_source(source_name):
+                # logging.warning(f"DEBUG: Found source {source_name}")
+                self.taint_tracker.mark_tainted(
+                    name=target_name,
+                    pii_types=['user_input'], # Generic PII type for now
+                    source=source_name,
+                    context="source_extraction"
+                )
+                self.taint_tracker.add_edge(
+                    source=source_name,
+                    target=target_name,
+                    line=line,
+                    flow_type="source"
+                )
+            # Check for property access on source (req.body.email)
+            elif '.' in source_name:
+                root_obj = source_name.split('.')[0]
+                if self._is_source(root_obj):
+                     # Infer PII type from property name
+                    prop_name = source_name.split('.')[-1]
+                    pii_types = self.taint_tracker.infer_pii_type(prop_name)
+                    if not pii_types:
+                        pii_types = ['user_input']
+                    
+                    self.taint_tracker.mark_tainted(
+                        name=target_name,
+                        pii_types=pii_types,
+                        source=source_name,
+                        context="property_access"
+                    )
+        
+        # 3. Handle MemberExpression source (e.g. x = userInput.email where userInput is tainted)
+        if source_node and source_node.type == 'MemberExpression':
+             obj_name = self._get_node_name(source_node.object)
+             if obj_name and self.taint_tracker.is_tainted(obj_name):
+                 taint_info = self.taint_tracker.get_taint_info(obj_name)
+                 # Infer PII from property
+                 prop_name = self._get_node_name(source_node.property)
+                 pii_types = self.taint_tracker.infer_pii_type(prop_name)
+                 if not pii_types:
+                     pii_types = taint_info.pii_types # Inherit if unknown
+
+                 self.taint_tracker.mark_tainted(
+                    name=target_name,
+                    pii_types=pii_types,
+                    source=taint_info.taint_source,
+                    context="property_access_tainted"
+                )
+                 self.taint_tracker.add_edge(
+                    source=source_name, # e.g. userInput.email
+                    target=target_name,
+                    line=line,
+                    flow_type="assignment"
+                )
+
+    def visit_CallExpression(self, node):
+        """Handle function calls (sinks)"""
+        callee = node.get('callee') if isinstance(node, dict) else node.callee
+        arguments = node.get('arguments') if isinstance(node, dict) else node.arguments
+        loc = node.get('loc') if isinstance(node, dict) else node.loc
+        line = loc['start']['line'] if isinstance(loc, dict) else loc.start.line
+        
+        callee_name = self._get_node_name(callee)
+        
+        if callee_name and self._is_sink(callee_name):
+            # Check arguments for tainted variables
+            for arg in arguments:
+                arg_name = self._get_node_name(arg)
+                if arg_name and self.taint_tracker.is_tainted(arg_name):
+                    # Found a leak!
+                    self.taint_tracker.add_edge(
+                        source=arg_name,
+                        target=callee_name,
+                        line=line,
+                        flow_type="sink"
+                    )
+        
+        self.generic_visit(node)
+
+    def _get_node_name(self, node):
+        """Helper to extract name from Identifier or MemberExpression"""
+        if not node:
+            return None
+            
+        node_type = node.get('type') if isinstance(node, dict) else getattr(node, 'type', None)
+        
+        if node_type == 'Identifier':
+            return node.get('name') if isinstance(node, dict) else node.name
+        elif node_type == 'MemberExpression':
+            obj_node = node.get('object') if isinstance(node, dict) else node.object
+            prop_node = node.get('property') if isinstance(node, dict) else node.property
+            computed = node.get('computed') if isinstance(node, dict) else node.computed
+            
+            obj = self._get_node_name(obj_node)
+            
+            if computed:
+                return None 
+            
+            prop = self._get_node_name(prop_node)
+            if obj and prop:
+                return f"{obj}.{prop}"
+        return None
+
+    def _is_source(self, name):
+        """Check if name is a known source"""
+        sources = ['req.body', 'req.query', 'req.params', 'document.cookie', 'localStorage', 'sessionStorage']
+        return any(name.startswith(s) for s in sources)
+
+    def _is_sink(self, name):
+        """Check if name is a known sink"""
+        sinks = ['console.log', 'console.info', 'console.error', 'fetch', 'axios.post', 'axios.put', 'document.write', 'innerHTML']
+        return any(name == s or name.endswith('.' + s) for s in sinks)

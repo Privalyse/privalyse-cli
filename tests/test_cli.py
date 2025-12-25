@@ -38,7 +38,9 @@ class TestCLI(unittest.TestCase):
         self.assertEqual(encoder.default({1, 2, 3}), [1, 2, 3])
         
         # Test Path
-        self.assertEqual(encoder.default(Path('/tmp/test')), '/tmp/test')
+        # Normalize path separators for cross-platform compatibility
+        encoded_path = encoder.default(Path('/tmp/test'))
+        self.assertEqual(str(Path(encoded_path)), str(Path('/tmp/test')))
         
         # Test object with to_dict
         class MockObj:

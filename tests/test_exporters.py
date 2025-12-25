@@ -61,7 +61,7 @@ class TestExporters(unittest.TestCase):
             exporter.export(self.scan_result, output_path)
             
             self.assertTrue(os.path.exists(output_path))
-            with open(output_path, 'r') as f:
+            with open(output_path, 'r', encoding='utf-8') as f:
                 content = f.read()
                 self.assertIn('<!DOCTYPE html>', content)
                 self.assertIn('Test Rule', content)

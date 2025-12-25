@@ -17,7 +17,7 @@
 </p>
 
 <p align="center">
-  <img src="https://privalyse.com/assets/demo.gif" alt="Privalyse Demo" width="100%"/>
+  <img src="https://privalyse.com/assets/github-privalyse-cli-demo.gif" alt="Privalyse Demo" width="100%"/>
 </p>
 
 ---

@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://privalyse.com/assets/github-privalyse-cli-readme-banner.png" alt="Privalyse Logo" width="100%"/>
+  <img src="https://raw.githubusercontent.com/Privalyse/privalyse-cli/main/public/github-privalyse-cli-readme-banner.png" alt="Privalyse Logo" width="100%"/>
 </p>
 
 <h1 align="center">The Linter for Privacy</h1>
@@ -17,7 +17,7 @@
 </p>
 
 <p align="center">
-  <img src="https://privalyse.com/assets/github-privalyse-cli-demo.gif" alt="Privalyse Demo" width="100%"/>
+  <img src="https://raw.githubusercontent.com/Privalyse/privalyse-cli/main/public/github-privalyse-cli-demo.gif" alt="Privalyse Demo" width="100%"/>
 </p>
 
 ---

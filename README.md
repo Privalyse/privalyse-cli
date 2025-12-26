@@ -84,6 +84,22 @@ privalyse_scan:
     paths: [report.md]
 ```
 
+### GitHub Code Scanning (SARIF)
+Integrate findings directly into GitHub Security tab.
+
+```yaml
+      - name: Run Privalyse
+        uses: privalyse/privalyse-cli@v0.3.1
+        with:
+          format: 'sarif'
+          out: 'results.sarif'
+
+      - name: Upload SARIF file
+        uses: github/codeql-action/upload-sarif@v2
+        with:
+          sarif_file: results.sarif
+```
+
 ---
 
 ## 🚀 Features

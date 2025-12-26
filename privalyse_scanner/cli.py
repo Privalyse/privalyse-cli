@@ -22,7 +22,7 @@ except ImportError:
 from privalyse_scanner import PrivalyseScanner
 from privalyse_scanner.models.config import ScanConfig
 from privalyse_scanner.models.finding import Finding, ClassificationResult
-from privalyse_scanner.exporters import MarkdownExporter, HTMLExporter, JSONExporter
+from privalyse_scanner.exporters import MarkdownExporter, HTMLExporter, JSONExporter, SARIFExporter
 from privalyse_scanner.utils.visualizer import FlowVisualizer
 from privalyse_scanner.utils.config_loader import ConfigLoader
 
@@ -92,7 +92,7 @@ Examples:
     
     # Output
     parser.add_argument('--format', type=str, default='md',
-                       choices=['json', 'markdown', 'md', 'html'],
+                       choices=['json', 'markdown', 'md', 'html', 'sarif'],
                        help='Output format (default: md)')
     parser.add_argument('--debug', action='store_true',
                        help='Enable debug logging')
@@ -199,6 +199,8 @@ Examples:
             output_format = 'html'
         elif str(output_path).endswith('.json'):
             output_format = 'json'
+        elif str(output_path).endswith('.sarif'):
+            output_format = 'sarif'
     
     # Prepare data for exporters
     findings = results.get('findings', [])
@@ -230,6 +232,18 @@ Examples:
         
         exporter.export(results, output_path)
     
+    elif output_format == 'sarif':
+        # Generate SARIF report
+        exporter = SARIFExporter()
+        sarif_report = exporter.export(findings, metadata)
+        
+        # Ensure .sarif extension
+        if not str(output_path).endswith('.sarif'):
+            output_path = output_path.with_suffix('.sarif')
+            
+        with output_path.open('w', encoding='utf-8') as f:
+            f.write(sarif_report)
+
     else:
         # Structured JSON output
         exporter = JSONExporter()

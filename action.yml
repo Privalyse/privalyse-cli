@@ -14,7 +14,7 @@ inputs:
     required: false
     default: 'privalyse_report.md'
   format:
-    description: 'Output format (markdown, json, html)'
+    description: 'Output format (markdown, json, html, sarif)'
     required: false
     default: 'markdown'
 runs:

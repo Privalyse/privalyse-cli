@@ -72,8 +72,8 @@ class TestCLI(unittest.TestCase):
         mock_scanner = mock_scanner_cls.return_value
         mock_scanner.scan.return_value = {
             'findings': [],
-            'metadata': {},
-            'compliance': {'score': 100}
+            'meta': {'total_findings': 0},
+            'compliance': {'score': 100, 'status': 'compliant', 'critical_findings': 0, 'high_findings': 0}
         }
 
         # Run main
@@ -89,7 +89,11 @@ class TestCLI(unittest.TestCase):
     @patch('privalyse_scanner.cli.ConfigLoader')
     def test_main_args(self, mock_config_loader, mock_scanner_cls):
         mock_scanner = mock_scanner_cls.return_value
-        mock_scanner.scan.return_value = {'findings': [], 'compliance': {'score': 80, 'status': 'compliant'}}
+        mock_scanner.scan.return_value = {
+            'findings': [], 
+            'meta': {'total_findings': 0},
+            'compliance': {'score': 80, 'status': 'compliant', 'critical_findings': 0, 'high_findings': 0}
+        }
         
         with patch('builtins.print'):
             main()

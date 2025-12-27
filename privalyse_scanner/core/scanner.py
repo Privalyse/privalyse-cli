@@ -652,6 +652,18 @@ class PrivalyseScanner:
                 line_number=flow.target_line,
                 metadata=node_metadata
             ))
+
+            # Add edge
+            self.graph.add_edge(GraphEdge(
+                source_id=source_id,
+                target_id=target_id,
+                type="data_flow",
+                label=flow.flow_type,
+                metadata={
+                    "transformation": flow.transformation,
+                    "context": flow.context
+                }
+            ))
     
     def _apply_custom_rules(self, files: List[Path]) -> List[Finding]:
         """

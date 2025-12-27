@@ -1,7 +1,8 @@
 import unittest
 from pathlib import Path
-from privalyse_scanner.analyzers.javascript_analyzer import JavaScriptAnalyzer, JSTaintTracker
+from privalyse_scanner.analyzers.javascript_analyzer import JavaScriptAnalyzer, JSTaintTracker, HAS_ESPRIMA
 
+@unittest.skipUnless(HAS_ESPRIMA, "Esprima not installed")
 class TestJSASTAnalysis(unittest.TestCase):
 
     def setUp(self):

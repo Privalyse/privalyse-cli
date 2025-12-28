@@ -29,6 +29,17 @@
 
 ---
 
+## 📚 Documentation
+
+Full documentation is available in the [docs/](docs/) directory:
+
+-   [**Getting Started**](docs/getting_started.md)
+-   [**Integration Guide**](docs/integration.md) (CI/CD, Pre-commit)
+-   [**Configuration**](docs/configuration.md) (Rules, Policies)
+-   [**Architecture**](docs/architecture.md)
+
+---
+
 ## ⚡ Quick Start
 
 ### Local

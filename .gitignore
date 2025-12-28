@@ -76,3 +76,4 @@ agg
 
 release_sandbox/
 
+!docs/*

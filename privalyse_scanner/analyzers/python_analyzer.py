@@ -58,18 +58,71 @@ def is_likely_secret(var_name: str, value: str) -> Tuple[Optional[str], float]:
     return None, 0.0
 
 
-# AI/LLM Sink Patterns
+# AI/LLM Sink Patterns - comprehensive list of AI providers
 AI_SINKS = {
     'openai': ['Completion.create', 'ChatCompletion.create', 'Embedding.create', 'chat.completions.create', 'embeddings.create'],
-    'anthropic': ['completions.create', 'messages.create'],
-    'cohere': ['generate', 'embed', 'chat'],
+    'anthropic': ['completions.create', 'messages.create', 'complete', 'stream'],
+    'cohere': ['generate', 'embed', 'chat', 'rerank'],
     'langchain': ['predict', 'run', 'call', 'invoke', 'stream', 'ainvoke', 'astream'],
-    'huggingface': ['pipeline', 'inference'],
-    'transformers': ['generate', '__call__'],
-    'requests': ['post', 'get', 'put', 'request'], # Generic HTTP
+    'huggingface': ['pipeline', 'inference', 'generate', 'text_generation'],
+    'google': ['generate_content', 'send_message', 'start_chat'],  # Google Gemini
+    'vertexai': ['predict', 'generate_content', 'send_message'],
+    'mistral': ['chat', 'complete', 'embeddings'],
+    'groq': ['chat.completions.create', 'complete'],
+    'ollama': ['generate', 'chat', 'embeddings'],
+    'replicate': ['run', 'stream'],
+    'requests': ['post', 'get', 'put', 'request'],  # Generic HTTP
     'httpx': ['post', 'get', 'put', 'request'],
     'aiohttp': ['post', 'get', 'put', 'request']
 }
+
+# Sanitization Functions - includes privalyse-mask integration
+SANITIZERS = {
+    # Generic sanitization keywords
+    'anonymize', 'mask', 'hash', 'encrypt', 'sanitize', 'redact', 'clean', 'scrub',
+    # Privalyse-mask specific patterns
+    'privalysemasker', 'privalyse_mask', 'masker.mask', 'mask_struct',
+    # Common masking library patterns
+    'presidio', 'anonymizer', 'scrubadub', 'faker', 'obfuscate', 'tokenize_pii'
+}
+
+# Regex pattern to detect already-masked text from privalyse-mask
+# Matches patterns like {Name_x92}, {German_IBAN}, {Email_abc123}, etc.
+import re as _re
+PRIVALYSE_MASK_PATTERN = _re.compile(r'\{[A-Za-z_]+_[a-zA-Z0-9]+\}')
+
+# Module-level imports that indicate privalyse-mask usage
+PRIVALYSE_MASK_IMPORTS = {'privalyse_mask', 'PrivalyseMasker'}
+
+
+def is_masked_text(text: str) -> bool:
+    """
+    Check if text contains privalyse-mask placeholders.
+    
+    Masked text patterns from privalyse-mask library:
+    - {Name_x92} - masked names
+    - {German_IBAN} - masked IBAN numbers  
+    - {Email_abc123} - masked emails
+    - {Phone_xyz} - masked phone numbers
+    
+    If text contains these patterns, it's already been sanitized
+    by privalyse-mask and should not trigger PII leak warnings.
+    """
+    if not isinstance(text, str):
+        return False
+    return bool(PRIVALYSE_MASK_PATTERN.search(text))
+
+
+def uses_privalyse_mask(code: str) -> bool:
+    """
+    Check if the code imports or uses privalyse-mask library.
+    
+    This is a quick heuristic to detect files that are using
+    proper PII masking before sending data to AI models.
+    """
+    lower_code = code.lower()
+    return any(imp.lower() in lower_code for imp in PRIVALYSE_MASK_IMPORTS)
+
 
 class PythonAnalyzer(BaseAnalyzer):
     """Analyzes Python code for privacy issues using AST parsing"""

@@ -15,6 +15,27 @@ from ..models.finding import Finding, ClassificationResult
 from ..models.taint import DataFlowEdge, TaintInfo
 from .base_analyzer import BaseAnalyzer, AnalyzedSymbol, AnalyzedImport
 
+# Regex pattern to detect already-masked text from privalyse-mask
+# Matches patterns like {Name_x92}, {German_IBAN}, {Email_abc123}, etc.
+PRIVALYSE_MASK_PATTERN = re.compile(r'\{[A-Za-z_]+_[a-zA-Z0-9]+\}')
+
+
+def is_masked_text(text: str) -> bool:
+    """
+    Check if text contains privalyse-mask placeholders.
+    
+    Masked text patterns from privalyse-mask library:
+    - {Name_x92} - masked names
+    - {German_IBAN} - masked IBAN numbers  
+    - {Email_abc123} - masked emails
+    
+    If text contains these patterns, it's already been sanitized
+    by privalyse-mask and should not trigger PII leak warnings.
+    """
+    if not isinstance(text, str):
+        return False
+    return bool(PRIVALYSE_MASK_PATTERN.search(text))
+
 
 class JSTaintTracker:
     """
@@ -494,8 +515,8 @@ class JavaScriptAnalyzer(BaseAnalyzer):
         # DB Return: const user = await User.create(...)
         db_return_pattern = re.compile(r"(?:const|let|var)\s+([a-zA-Z0-9_$]+)\s*=\s*(?:await\s+)?[A-Z]\w*\.(?:create|insert|save|findOne|findById)")
 
-        # Sanitization functions
-        sanitization_pattern = re.compile(r"(hash|encrypt|mask|sanitize|anonymize)", re.IGNORECASE)
+        # Sanitization functions - includes privalyse-mask patterns
+        sanitization_pattern = re.compile(r"(hash|encrypt|mask|sanitize|anonymize|privalyse|masker\.mask|redact|scrub|obfuscate)", re.IGNORECASE)
 
         current_sink = None
         current_sink_url = None

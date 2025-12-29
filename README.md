@@ -2,10 +2,10 @@
   <img src="https://raw.githubusercontent.com/Privalyse/privalyse-cli/main/public/github-privalyse-cli-readme-banner.png" alt="Privalyse Logo" width="100%"/>
 </p>
 
-<h1 align="center">The Linter for Privacy</h1>
+<h1 align="center">Privacy Guardrails for AI Applications</h1>
 
 <p align="center">
-  <b>Catch PII leaks & secrets before they hit production.</b>
+  <b>Catch PII leaks to LLMs before they hit production.</b>
 </p>
 
 <p align="center">
@@ -22,28 +22,70 @@
 
 ---
 
-**Privalyse** is a static analysis tool that builds a **Semantic Data Flow Graph** of your application. It traces data from source to sink to detect privacy violations that regex-based tools miss.
+**Privalyse CLI** is a static analysis tool that builds a **Semantic Data Flow Graph** of your AI application. It traces PII from source to AI sink—detecting privacy violations that regex-based tools miss.
 
 *   ❌ *Traditional Linter:* "Variable `user_email` used in line 42."
-*   ✅ *Privalyse:* "User Email (Source) → Prompt Template → OpenAI API (Sink) → Logs (Leak)."
+*   ✅ *Privalyse:* "User Email (Source) → Prompt Template → OpenAI API (Sink) = **Privacy Leak**"
 
 ---
 
-## 📚 Documentation
+## 🤖 Built for AI Applications
 
-Full documentation is available in the [docs/](docs/) directory:
+Privalyse is purpose-built for **LLM-integrated applications**. It detects when sensitive user data is being sent to:
 
--   [**Getting Started**](docs/getting_started.md)
--   [**Integration Guide**](docs/integration.md) (CI/CD, Pre-commit)
--   [**Configuration**](docs/configuration.md) (Rules, Policies)
--   [**Architecture**](docs/architecture.md)
+| Provider | Support |
+|----------|---------|
+| **OpenAI** (GPT-4, o1, Embeddings) | ✅ Full |
+| **Anthropic** (Claude) | ✅ Full |
+| **Google** (Gemini, Vertex AI) | ✅ Full |
+| **Mistral AI** | ✅ Full |
+| **Groq** | ✅ Full |
+| **Cohere** | ✅ Full |
+| **Ollama** (Local LLMs) | ✅ Full |
+| **LangChain** / **LlamaIndex** | ✅ Full |
+| **Hugging Face** | ✅ Full |
+| **Generic HTTP to AI APIs** | ✅ Full |
+
+---
+
+## 🛡️ Works with privalyse-mask
+
+**[privalyse-mask](https://github.com/privalyse/privalyse-mask)** is our companion library for masking PII before sending it to LLMs.
+
+**Privalyse CLI automatically recognizes `privalyse-mask` usage and won't flag already-masked data as leaks.**
+
+```python
+from privalyse_mask import PrivalyseMasker
+from openai import OpenAI
+
+masker = PrivalyseMasker()
+client = OpenAI()
+
+# User input with PII
+user_input = "My name is Peter and my email is peter@example.com"
+
+# ✅ Mask before sending to LLM
+masked_text, mapping = masker.mask(user_input)
+# -> "My name is {Name_x92} and my email is {Email_abc123}"
+
+response = client.chat.completions.create(
+    model="gpt-4",
+    messages=[{"role": "user", "content": masked_text}]  # ✅ Safe - masked data
+)
+
+# Restore original values in response
+final_response = masker.unmask(response.choices[0].message.content, mapping)
+```
+
+**Privalyse CLI will:**
+- ✅ **Not flag** the `masked_text` being sent to OpenAI (it's sanitized)
+- ⚠️ **Flag** if you send `user_input` directly without masking
 
 ---
 
 ## ⚡ Quick Start
 
-### Local
-Install and run in seconds. No config required.
+### Install & Run
 
 ```bash
 pip install privalyse-cli
@@ -52,11 +94,10 @@ privalyse
 ```
 
 ### GitHub Actions
-Add to your CI pipeline in 30 seconds.
 
 ```yaml
 # .github/workflows/privacy.yml
-name: Privacy Scan
+name: AI Privacy Scan
 on: [push, pull_request]
 
 jobs:
@@ -69,7 +110,6 @@ jobs:
 ```
 
 ### Pre-Commit Hook
-Catch leaks before you commit.
 
 ```yaml
 # .pre-commit-config.yaml
@@ -77,84 +117,84 @@ repos:
   - repo: local
     hooks:
       - id: privalyse
-        name: Privalyse Scan
+        name: Privalyse AI Privacy Scan
         entry: privalyse
         language: system
         pass_filenames: false
 ```
 
-### GitLab CI
+---
 
-```yaml
-# .gitlab-ci.yml
-privalyse_scan:
-  script:
-    - pip install privalyse-cli
-    - privalyse --out report.md
-  artifacts:
-    paths: [report.md]
-```
+## 📚 Documentation
 
-### GitHub Code Scanning (SARIF)
-Integrate findings directly into GitHub Security tab.
-
-```yaml
-      - name: Run Privalyse
-        uses: privalyse/privalyse-cli@v0.3.1
-        with:
-          format: 'sarif'
-          out: 'results.sarif'
-
-      - name: Upload SARIF file
-        uses: github/codeql-action/upload-sarif@v2
-        with:
-          sarif_file: results.sarif
-```
+-   [**Getting Started**](docs/getting_started.md)
+-   [**Integration Guide**](docs/integration.md) (CI/CD, Pre-commit)
+-   [**Configuration**](docs/configuration.md) (Rules, Policies)
+-   [**Architecture**](docs/architecture.md)
 
 ---
 
 ## 🚀 Features
 
+### 🤖 AI Guardrails (Primary Focus)
+Specialized checks for LLM-integrated applications.
+*   **Prevents:** Sending sensitive customer data to model prompts
+*   **Audits:** OpenAI, Anthropic, Google Gemini, LangChain, and more
+*   **Recognizes:** `privalyse-mask` and other sanitization libraries
+*   **Tracks:** Data flow from user input → prompt → AI API
+
 ### 🕵️‍♂️ Secret Detection
-Detects hardcoded API keys, tokens, and credentials before they are pushed.
-*   *Supports:* AWS, Stripe, OpenAI, Slack, and generic high-entropy strings.
+Detects hardcoded API keys, tokens, and credentials.
+*   *Supports:* AWS, Stripe, OpenAI, Slack, Anthropic, and generic high-entropy strings
 
 ### 🗣️ PII Leak Prevention
-Identifies Personal Identifiable Information (PII) leaking into logs, external APIs, or analytics.
-*   *Detects:* Emails, Phone Numbers, Credit Cards, SSNs.
-*   *Context Aware:* Understands variable names like `user_email` or `client_id`.
+Identifies PII leaking into logs, external APIs, or analytics.
+*   *Detects:* Emails, Phone Numbers, Credit Cards, SSNs, Names, Addresses
+*   *Context Aware:* Understands variable names like `user_email` or `customer_ssn`
 
 ### ⚖️ GDPR & Data Sovereignty
 Maps data flows to ensure compliance.
-*   *Flags:* Data transfers to non-EU providers (e.g., OpenAI, AWS US-East).
-*   *Verifies:* Usage of sanitization functions before data egress.
+*   *Flags:* Data transfers to non-EU AI providers
+*   *Verifies:* Usage of sanitization/masking functions before data egress
 
-### 🤖 AI Guardrails
-Specialized checks for LLM-integrated applications.
-*   *Prevents:* Sending sensitive customer data to model prompts.
-*   *Audits:* LangChain and OpenAI SDK usage.
+---
+
+## 🔧 Recognized Sanitizers
+
+Privalyse automatically recognizes these sanitization patterns and won't flag sanitized data:
+
+| Library/Pattern | Recognition |
+|-----------------|-------------|
+| `privalyse-mask` (`PrivalyseMasker.mask()`) | ✅ Full |
+| `presidio` (Microsoft Presidio) | ✅ Full |
+| `scrubadub` | ✅ Full |
+| Custom functions with: `mask`, `anonymize`, `hash`, `encrypt`, `redact`, `sanitize` | ✅ Full |
+| Masked text patterns: `{Name_xyz}`, `{Email_abc}` | ✅ Full |
 
 ---
 
 ## 🤖 For AI Agents & MCP Servers
 
-Privalyse is designed to be **agent-friendly**. If you are building an AI coding agent or using an MCP (Model Context Protocol) server, Privalyse provides structured outputs that agents can understand.
+Privalyse is **agent-friendly**. Get structured JSON output for autonomous remediation:
 
 ```bash
 privalyse --format json --out privalyse_report.json
 ```
 
-Agents can read the JSON report to autonomously fix privacy leaks in the codebase.
+AI coding agents can read the report and automatically fix privacy leaks.
 
 ---
 
 ## 🗺️ Roadmap
 
-*   [x] **Python Support** (AST Analysis)
+*   [x] **Python Support** (Full AST Analysis)
 *   [x] **JavaScript/TypeScript Support** (AST & Regex)
 *   [x] **Cross-File Taint Tracking**
+*   [x] **privalyse-mask Integration**
 *   [ ] **VS Code Extension** (Coming Soon)
 *   [ ] **Custom Rule Engine**
+
+---
 
 ## 🤝 Contributing
 
